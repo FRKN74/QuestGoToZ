@@ -237,6 +237,13 @@ local SERVICES_DB = {
         { faction = "Horde",    mapID = 18,  name = "Abigail Shiel (Brill)",               x = 0.610, y = 0.524 },
         { faction = "Horde",    mapID = 90,  name = "Ronald Burch (Undercity)",            x = 0.624, y = 0.434 },
         { faction = "Horde",    mapID = 110, name = "Sathren Highdawn (Silvermoon)",       x = 0.542, y = 0.710 },
+        -- Diger kitalar / Ana merkezler (Neutral)
+        { faction = "Neutral",  mapID = 111, name = "Cro Threadstrong (Shattrath)",        x = 0.654, y = 0.684 },
+        { faction = "Neutral",  mapID = 125, name = "Applebough (Dalaran Northrend)",      x = 0.514, y = 0.294 },
+        { faction = "Neutral",  mapID = 627, name = "Applebough (Dalaran Broken Isles)",   x = 0.506, y = 0.294 },
+        { faction = "Neutral",  mapID = 1670, name = "Au'narim (Oribos)",                  x = 0.564, y = 0.718 },
+        { faction = "Neutral",  mapID = 2112, name = "Gorgonzormu (Valdrakken)",           x = 0.452, y = 0.576 },
+        { faction = "Neutral",  mapID = 2339, name = "Kargand (Dornogal)",                 x = 0.542, y = 0.598 },
     },
     mailbox = {
         { faction = "Alliance", mapID = 52,  name = "Posta Kutusu (Sentinel Hill)",        x = 0.529, y = 0.533 },
@@ -256,6 +263,12 @@ local SERVICES_DB = {
         { faction = "Horde",    mapID = 18,  name = "Posta Kutusu (Brill)",                x = 0.614, y = 0.520 },
         { faction = "Horde",    mapID = 90,  name = "Posta Kutusu (Undercity)",            x = 0.677, y = 0.382 },
         { faction = "Horde",    mapID = 110, name = "Posta Kutusu (Silvermoon)",           x = 0.794, y = 0.576 },
+        { faction = "Neutral",  mapID = 111, name = "Posta Kutusu (Shattrath)",            x = 0.562, y = 0.816 },
+        { faction = "Neutral",  mapID = 125, name = "Posta Kutusu (Dalaran)",              x = 0.506, y = 0.478 },
+        { faction = "Neutral",  mapID = 627, name = "Posta Kutusu (Dalaran BI)",           x = 0.506, y = 0.482 },
+        { faction = "Neutral",  mapID = 1670, name = "Posta Kutusu (Oribos)",              x = 0.608, y = 0.512 },
+        { faction = "Neutral",  mapID = 2112, name = "Posta Kutusu (Valdrakken)",          x = 0.484, y = 0.482 },
+        { faction = "Neutral",  mapID = 2339, name = "Posta Kutusu (Dornogal)",            x = 0.482, y = 0.546 },
     },
     innkeeper = {
         { faction = "Alliance", mapID = 52,  name = "Innkeeper Heather (Sentinel Hill)",   x = 0.529, y = 0.536 },
@@ -275,6 +288,12 @@ local SERVICES_DB = {
         { faction = "Horde",    mapID = 18,  name = "Innkeeper Renee (Brill)",             x = 0.617, y = 0.520 },
         { faction = "Horde",    mapID = 90,  name = "Innkeeper Norman (Undercity)",        x = 0.676, y = 0.382 },
         { faction = "Horde",    mapID = 110, name = "Innkeeper Velandra (Silvermoon)",     x = 0.795, y = 0.577 },
+        { faction = "Neutral",  mapID = 111, name = "Innkeeper Haelthol (Shattrath)",      x = 0.562, y = 0.818 },
+        { faction = "Neutral",  mapID = 125, name = "Amisi Azuregaze (Dalaran)",           x = 0.510, y = 0.372 },
+        { faction = "Neutral",  mapID = 627, name = "Amisi Azuregaze (Dalaran BI)",        x = 0.508, y = 0.370 },
+        { faction = "Neutral",  mapID = 1670, name = "Host Ta'rela (Oribos)",              x = 0.672, y = 0.496 },
+        { faction = "Neutral",  mapID = 2112, name = "Innkeeper Kaedra (Valdrakken)",      x = 0.476, y = 0.464 },
+        { faction = "Neutral",  mapID = 2339, name = "Ronesh (Dornogal)",                  x = 0.452, y = 0.464 },
     },
     flight = {
         { faction = "Alliance", mapID = 52,  name = "Thor (Sentinel Hill Ucus)",           x = 0.565, y = 0.526 },
@@ -288,6 +307,12 @@ local SERVICES_DB = {
         { faction = "Horde",    mapID = 88,  name = "Tal (Thunder Bluff Ucus)",            x = 0.470, y = 0.498 },
         { faction = "Horde",    mapID = 90,  name = "Michael Garrett (Undercity Ucus)",    x = 0.633, y = 0.485 },
         { faction = "Horde",    mapID = 110, name = "Skymaster Brightdawn (Silvermoon)",   x = 0.544, y = 0.508 },
+        { faction = "Neutral",  mapID = 111, name = "Nutral (Shattrath Ucus)",             x = 0.640, y = 0.412 },
+        { faction = "Neutral",  mapID = 125, name = "Aludane Whitecloud (Dalaran Ucus)",   x = 0.722, y = 0.458 },
+        { faction = "Neutral",  mapID = 627, name = "Aludane Whitecloud (Dalaran BI)",     x = 0.698, y = 0.514 },
+        { faction = "Neutral",  mapID = 1670, name = "Flightmaster Au'vesk (Oribos)",      x = 0.606, y = 0.684 },
+        { faction = "Neutral",  mapID = 2112, name = "Aluri (Valdrakken Ucus)",            x = 0.444, y = 0.640 },
+        { faction = "Neutral",  mapID = 2339, name = "Kurazidaia (Dornogal Ucus)",         x = 0.526, y = 0.672 },
     },
 }
 

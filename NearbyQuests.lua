@@ -8,11 +8,14 @@ local ROW_HEIGHT = 23
 local GROUP_HEADER_HEIGHT = 21
 local HEADER_HEIGHT = 25
 local STATUS_BAR_HEIGHT = 42
+local SEARCH_BAR_HEIGHT = 20
 local FRAME_WIDTH = 276
 local CONTENT_WIDTH = FRAME_WIDTH - 16
 
 local nearbyFrame = nil
 local statusBarFrame = nil
+local searchEditBox = nil
+local searchFilterText = ""
 local profSlots = {}
 local scrollFrame = nil
 local scrollChild = nil
@@ -140,18 +143,62 @@ local function ShowQuestTooltip(anchor, row)
         end
     end
 
+    -- Parti ilerlemesi varsa goster (Faz 3)
+    if ns.PartySync and row.questID and row.questID > 0 and row.groupType ~= "available" then
+        local pp = ns.PartySync:GetPartyProgress(row.questID)
+        if pp then
+            local parts = {}
+            for i = 1, #pp do
+                table.insert(parts, pp[i].name .. ": " .. pp[i].text)
+            end
+            GameTooltip:AddLine(" ")
+            GameTooltip:AddLine("Parti: " .. table.concat(parts, ", "), 0.55, 0.85, 1.0, true)
+        end
+    end
+
     GameTooltip:AddLine(" ")
     if row.hasLocation then
-        GameTooltip:AddLine("Sol ok veya satira tikla: Haritada yonlendir", 0.7, 0.8, 0.9)
+        if row.questID and row.questID > 0 and row.groupType ~= "available" then
+            GameTooltip:AddLine("Sol tik: Yonlendir | Sag tik: Detay | Shift+Tik: Link", 0.7, 0.8, 0.9)
+        else
+            GameTooltip:AddLine("Sol tik: Haritada yonlendir", 0.7, 0.8, 0.9)
+        end
     else
-        GameTooltip:AddLine("Bu gorev icin konum bilgisi bulunamadi.", 1.0, 0.4, 0.4)
+        if row.questID and row.questID > 0 and row.groupType ~= "available" then
+            GameTooltip:AddLine("Sag tik: Detay | Shift+Tik: Link", 0.7, 0.8, 0.9)
+        else
+            GameTooltip:AddLine("Bu gorev icin konum bilgisi bulunamadi.", 1.0, 0.4, 0.4)
+        end
     end
     GameTooltip:Show()
+end
+
+local function OpenQuestDetailsPanel(questID)
+    if not ns:IsSafeNumber(questID) or questID <= 0 then
+        return
+    end
+    if ns:IsInCombat() then
+        ns:Print("Savas sirasinda gorev detay penceresi acilamaz.")
+        return
+    end
+    if type(_G.QuestMapFrame_OpenToQuestDetails) == "function" then
+        pcall(_G.QuestMapFrame_OpenToQuestDetails, questID)
+        return
+    end
+    if type(_G.QuestUtil) == "table" and type(_G.QuestUtil.OpenQuestDetails) == "function" then
+        pcall(_G.QuestUtil.OpenQuestDetails, questID)
+        return
+    end
+    ns:TrySafeC("C_QuestLog", "SetSelectedQuest", questID)
+    if type(_G.ToggleQuestLog) == "function" then
+        pcall(_G.ToggleQuestLog)
+    end
 end
 
 local function CreateSlot(parent)
     local row = CreateFrame("Button", nil, parent)
     row:SetSize(CONTENT_WIDTH, ROW_HEIGHT)
+    row:RegisterForClicks("LeftButtonUp", "RightButtonUp")
 
     local bg = row:CreateTexture(nil, "BACKGROUND")
     bg:SetAllPoints()
@@ -241,7 +288,7 @@ local function CreateSlot(parent)
     distText:SetJustifyH("RIGHT")
     row.distText = distText
 
-    row:SetScript("OnClick", function(selfRow)
+    row:SetScript("OnClick", function(selfRow, button)
         if selfRow.isGroupHeader then
             if selfRow.groupKey then
                 collapsedGroups[selfRow.groupKey] = not collapsedGroups[selfRow.groupKey]
@@ -252,6 +299,23 @@ local function CreateSlot(parent)
         if ns:IsInCombat() then
             ns:Print("Combat sirasinda UI degisikligi engellendi.")
             return
+        end
+        if button == "RightButton" then
+            if selfRow.questID and selfRow.questID > 0 and selfRow.groupType ~= "available" then
+                OpenQuestDetailsPanel(selfRow.questID)
+            end
+            return
+        end
+        -- Faz 1: Shift + Sol Tik ile sohbete gorev linki ekle
+        if type(_G.IsShiftKeyDown) == "function" and _G.IsShiftKeyDown() and selfRow.questID and selfRow.questID > 0 then
+            local okL, link = ns:SafeGlobal("GetQuestLink", selfRow.questID)
+            if (not okL or not ns:IsSafeString(link)) then
+                okL, link = ns:TrySafeC("C_QuestLog", "GetQuestLink", selfRow.questID)
+            end
+            if okL and ns:IsSafeString(link) and type(_G.ChatEdit_InsertLink) == "function" then
+                pcall(_G.ChatEdit_InsertLink, link)
+                return
+            end
         end
         if selfRow.questID then
             ns:ToggleQuestWaypoint(selfRow.questID, selfRow.fallbackLoc)
@@ -623,8 +687,63 @@ local function CreateNearbyFrame()
 
     CreateStatusBar(f)
 
+    -- Faz 4: Hizli arama / filtre kutusu
+    local searchHolder = CreateFrame("Frame", nil, f)
+    searchHolder:SetPoint("TOPLEFT", f, "TOPLEFT", 8, -(HEADER_HEIGHT + STATUS_BAR_HEIGHT + 5))
+    searchHolder:SetPoint("TOPRIGHT", f, "TOPRIGHT", -8, -(HEADER_HEIGHT + STATUS_BAR_HEIGHT + 5))
+    searchHolder:SetHeight(SEARCH_BAR_HEIGHT)
+    local sBg = searchHolder:CreateTexture(nil, "BACKGROUND")
+    sBg:SetAllPoints()
+    sBg:SetColorTexture(0.02, 0.04, 0.08, 0.55)
+
+    local sBox = CreateFrame("EditBox", "QuestGoToZSearchBox", searchHolder)
+    sBox:SetPoint("TOPLEFT", searchHolder, "TOPLEFT", 6, -2)
+    sBox:SetPoint("BOTTOMRIGHT", searchHolder, "BOTTOMRIGHT", -20, 2)
+    sBox:SetFont("Fonts\\ARIALN.TTF", 11, "")
+    sBox:SetTextColor(0.95, 0.96, 1.0)
+    sBox:SetAutoFocus(false)
+
+    local placeholder = sBox:CreateFontString(nil, "OVERLAY")
+    placeholder:SetFont("Fonts\\ARIALN.TTF", 11, "")
+    placeholder:SetPoint("LEFT", sBox, "LEFT", 0, 0)
+    placeholder:SetTextColor(0.55, 0.62, 0.72)
+    placeholder:SetText("Gorev veya bolge ara...")
+
+    local clearSearchBtn = CreateFrame("Button", nil, searchHolder)
+    clearSearchBtn:SetSize(16, 16)
+    clearSearchBtn:SetPoint("RIGHT", searchHolder, "RIGHT", -3, 0)
+    local clearTxt = clearSearchBtn:CreateFontString(nil, "OVERLAY")
+    clearTxt:SetFont("Fonts\\ARIALN.TTF", 11, "")
+    clearTxt:SetAllPoints()
+    clearTxt:SetText("|cffaaaaaaX|r")
+    clearSearchBtn:Hide()
+    clearSearchBtn:SetScript("OnClick", function()
+        sBox:SetText("")
+        sBox:ClearFocus()
+    end)
+
+    sBox:SetScript("OnTextChanged", function(selfBox)
+        local txt = selfBox:GetText() or ""
+        searchFilterText = string.lower(strtrim and strtrim(txt) or txt:match("^%s*(.-)%s*$"))
+        if searchFilterText ~= "" then
+            placeholder:Hide()
+            clearSearchBtn:Show()
+        else
+            placeholder:Show()
+            clearSearchBtn:Hide()
+        end
+        Nearby:ScanOnce()
+    end)
+    sBox:SetScript("OnEscapePressed", function(selfBox)
+        selfBox:ClearFocus()
+    end)
+    sBox:SetScript("OnEnterPressed", function(selfBox)
+        selfBox:ClearFocus()
+    end)
+    searchEditBox = sBox
+
     scrollFrame = CreateFrame("ScrollFrame", "QuestGoToZNearbyScrollFrame", f)
-    scrollFrame:SetPoint("TOPLEFT", f, "TOPLEFT", 8, -(HEADER_HEIGHT + STATUS_BAR_HEIGHT + 6))
+    scrollFrame:SetPoint("TOPLEFT", f, "TOPLEFT", 8, -(HEADER_HEIGHT + STATUS_BAR_HEIGHT + SEARCH_BAR_HEIGHT + 9))
     scrollFrame:SetPoint("BOTTOMRIGHT", f, "BOTTOMRIGHT", -8, 16)
     scrollFrame:EnableMouseWheel(true)
     scrollFrame:SetScript("OnMouseWheel", function(selfScroll, delta)
@@ -941,7 +1060,20 @@ local function CollectZoneGroupedQuests(playerMapID, px, py, mapWidth, mapHeight
         return nil
     end
 
-    local function AddItem(questID, groupType, title, qMapID, tx, ty, headerZoneName)
+    local function FormatQuestLevelTag(level)
+        local db = ns.db or ns.DEFAULTS
+        if not db.showQuestLevel or not ns:IsSafeNumber(level) or level <= 0 then
+            return nil
+        end
+        local r, g, b = 1.0, 0.85, 0.20
+        local okCol, col = ns:SafeGlobal("GetQuestDifficultyColor", level)
+        if okCol and type(col) == "table" and ns:IsSafeNumber(col.r) and ns:IsSafeNumber(col.g) and ns:IsSafeNumber(col.b) then
+            r, g, b = col.r, col.g, col.b
+        end
+        return string.format("|cff%02x%02x%02x[%d]|r", math.floor(r * 255), math.floor(g * 255), math.floor(b * 255), level)
+    end
+
+    local function AddItem(questID, groupType, title, qMapID, tx, ty, headerZoneName, questLevel, suggestedGroup)
         if not ns:IsSafeNumber(questID) or foundByID[questID] then
             return
         end
@@ -985,7 +1117,8 @@ local function CollectZoneGroupedQuests(playerMapID, px, py, mapWidth, mapHeight
             isNearby = isNearby,
             zoneName = zoneName,
             isInCurrentZone = isInCurrentZone,
-            difficultyTag = ns.Comfort and ns.Comfort:GetQuestDifficultyTag(questID, nil) or nil,
+            levelTag = FormatQuestLevelTag(questLevel),
+            difficultyTag = ns.Comfort and ns.Comfort:GetQuestDifficultyTag(questID, suggestedGroup) or nil,
             isDroppable = ns.Comfort and ns.Comfort:IsQuestDroppable(questID, dist, isInCurrentZone, groupType == "completed") or false,
         }
 
@@ -1017,9 +1150,9 @@ local function CollectZoneGroupedQuests(playerMapID, px, py, mapWidth, mapHeight
                     local grp = (okComp and isComplete == true) and "completed" or "active"
                     local loc = ns:GetQuestLocation(qid)
                     if loc then
-                        AddItem(qid, grp, info.title or loc.title, loc.mapID, loc.x, loc.y, currentHeaderName)
+                        AddItem(qid, grp, info.title or loc.title, loc.mapID, loc.x, loc.y, currentHeaderName, info.level, info.suggestedGroup)
                     else
-                        AddItem(qid, grp, info.title, nil, nil, nil, currentHeaderName)
+                        AddItem(qid, grp, info.title, nil, nil, nil, currentHeaderName, info.level, info.suggestedGroup)
                     end
                 end
             end
@@ -1185,6 +1318,34 @@ local function CollectZoneGroupedQuests(playerMapID, px, py, mapWidth, mapHeight
         })
     end
 
+    -- Faz 4: Arama filtresi aktifse sadece eslesen gorevleri/bolgeleri goster
+    if searchFilterText ~= "" then
+        local filteredSections = {}
+        for i = 1, #sections do
+            local sec = sections[i]
+            local matched = {}
+            local secMatch = string.lower(sec.label or ""):find(searchFilterText, 1, true) ~= nil
+            for j = 1, #sec.items do
+                local it = sec.items[j]
+                local tMatch = string.lower(it.title or ""):find(searchFilterText, 1, true) ~= nil
+                local zMatch = string.lower(it.zoneName or ""):find(searchFilterText, 1, true) ~= nil
+                if secMatch or tMatch or zMatch then
+                    table.insert(matched, it)
+                end
+            end
+            if #matched > 0 then
+                table.insert(filteredSections, {
+                    key = sec.key,
+                    label = sec.label,
+                    color = sec.color,
+                    bgR = sec.bgR, bgG = sec.bgG, bgB = sec.bgB,
+                    items = matched,
+                })
+            end
+        end
+        sections = filteredSections
+    end
+
     return currentZoneName, sections
 end
 
@@ -1328,8 +1489,11 @@ function Nearby:ScanOnce()
                 rSlot.titleText:SetPoint("LEFT", rSlot, "LEFT", 22, 0)
                 rSlot.titleText:SetPoint("RIGHT", rSlot, "RIGHT", -56, 0)
                 local statusPrefix = ""
+                if item.levelTag then
+                    statusPrefix = item.levelTag .. " "
+                end
                 if not item.isInCurrentZone and item.isComplete then
-                    statusPrefix = "|cff33ff66[Teslim]|r "
+                    statusPrefix = statusPrefix .. "|cff33ff66[Teslim]|r "
                 end
                 if item.difficultyTag then
                     statusPrefix = statusPrefix .. "|cffff4444" .. item.difficultyTag .. "|r "

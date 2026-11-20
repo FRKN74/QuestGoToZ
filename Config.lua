@@ -406,6 +406,25 @@ local function CreateConfigFrame()
         function() return ns.db.showQuestItemButton end,
         function(v) ns.db.showQuestItemButton = v end
     ))
+    table.insert(f.controls, CreateCheckbox(tab2Panel, "Hasar yazilari (Krit/Normal/Kirmizi)", 215, -6,
+        function() return ns.db.showCombatText end,
+        function(v) ns.db.showCombatText = v end
+    ))
+    table.insert(f.controls, CreateCheckbox(tab2Panel, "Dunya haritasi (M) gorev pinleri", 215, -32,
+        function() return ns.db.showWorldMapPins end,
+        function(v)
+            ns.db.showWorldMapPins = v
+            if ns.Waypoint then ns.Waypoint:RefreshWorldMapCompletedCircles() end
+        end
+    ))
+    table.insert(f.controls, CreateCheckbox(tab2Panel, "Gorev seviyesi [Lv] goster", 215, -58,
+        function() return ns.db.showQuestLevel end,
+        function(v) ns.db.showQuestLevel = v end
+    ))
+    table.insert(f.controls, CreateCheckbox(tab2Panel, "Parti ilerleme senkronu", 215, -84,
+        function() return ns.db.partySync end,
+        function(v) ns.db.partySync = v end
+    ))
 
     local wHeader = tab2Panel:CreateFontString(nil, "OVERLAY", "GameFontNormal")
     wHeader:SetPoint("TOPLEFT", tab2Panel, "TOPLEFT", 10, -248)
@@ -532,6 +551,10 @@ SlashCmdList["QUESTGOTOZ"] = function(msg)
         ns.db.quietMode = not ns.db.quietMode
         ns:FireCallback("CONFIG_CHANGED")
         ns:Print("Sessiz mod: " .. (ns.db.quietMode and "ACIK" or "KAPALI"))
+    elseif cmd == "testdmg" or cmd == "test" then
+        if ns.CombatText then
+            ns.CombatText:RunTest()
+        end
     else
         Config:Toggle()
     end

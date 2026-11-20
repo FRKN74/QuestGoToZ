@@ -1,7 +1,7 @@
 local addonName, ns = ...
 
 ns.name = addonName
-ns.version = "1.0.1"
+ns.version = "1.1.0"
 
 -- Varsayilan SavedVariables profil ayarlari
 ns.DEFAULTS = {
@@ -25,6 +25,10 @@ ns.DEFAULTS = {
     showNearestServices = true,  -- En yakin hizmetler (satici, posta, han, ucus)
     bagFullVendorAlert = true,   -- Canta %90 dolunca en yakin saticiyi oner
     showQuestItemButton = true,  -- Gorev esyasi kullan (SecureActionButton)
+    showCombatText = true,       -- Metin2 tarzi hasar yazilari (krit/normal/alinan)
+    showWorldMapPins = true,     -- Dunya haritasinda (M) gorev pinleri ve yesil daireler
+    showQuestLevel = true,       -- Gorev listesinde renkli [Lv] etiketi
+    partySync = true,            -- Parti arkadaslariyla canli gorev ilerlemesi senkronu
     locked = false,              -- Cerceveleri kilitle
     weights = {
         distance = 40,           -- Yakinlik agirligi

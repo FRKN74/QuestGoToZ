@@ -280,12 +280,118 @@ function QuestMobs:RefreshAllNameplates()
     end
 end
 
--- Ozellik 3: Mouseover tooltip'e "Gorev: <gorev adi> <ilerleme>/<hedef>" satiri ekler
+-- Bir mob icin tum tamamlanmamis gorev eslesmelerini dondurur (coklu gorev destegi)
+local function GetUnitAllQuestInfos(unit)
+    if not ns:IsSafeString(unit) then
+        return {}
+    end
+    local okExists, exists = ns:SafeGlobal("UnitExists", unit)
+    if not okExists or not exists then
+        return {}
+    end
+    local okPlayer, isPlayer = ns:SafeGlobal("UnitIsPlayer", unit)
+    if okPlayer and isPlayer then
+        return {}
+    end
+
+    local results = {}
+    local seenKeys = {}
+
+    local okTip, tipData = ns:TrySafeC("C_TooltipInfo", "GetUnit", unit)
+    if okTip and type(tipData) == "table" and type(tipData.lines) == "table" then
+        local currentQuestID = nil
+        local currentQuestTitle = nil
+
+        for i = 1, #tipData.lines do
+            local line = tipData.lines[i]
+            if type(line) == "table" then
+                local lType = line.type
+                local lText = line.leftText
+
+                if LINE_TYPE_QUEST_TITLE and lType == LINE_TYPE_QUEST_TITLE then
+                    currentQuestID = ns:IsSafeNumber(line.id) and line.id or nil
+                    currentQuestTitle = ns:IsSafeString(lText) and lText or nil
+                elseif (LINE_TYPE_QUEST_OBJECTIVE and lType == LINE_TYPE_QUEST_OBJECTIVE)
+                    or (line.completed == false and ns:IsSafeString(lText)) then
+                    local isCompleted = (line.completed == true)
+                    local progText, progDone = ExtractProgressText(lText)
+                    if not isCompleted and not progDone then
+                        local qName = currentQuestTitle
+                        if (not ns:IsSafeString(qName) or qName == "") and ns:IsSafeNumber(currentQuestID) then
+                            local okT, fetched = ns:TrySafeC("C_QuestLog", "GetTitleForQuestID", currentQuestID)
+                            if okT and ns:IsSafeString(fetched) and fetched ~= "" then
+                                qName = fetched
+                            end
+                        end
+                        if ns:IsSafeString(qName) and qName ~= "" then
+                            local dedupeKey = tostring(currentQuestID or qName) .. "|" .. tostring(progText or "")
+                            if not seenKeys[dedupeKey] then
+                                seenKeys[dedupeKey] = true
+                                table.insert(results, {
+                                    questID = currentQuestID,
+                                    questTitle = qName,
+                                    progress = progText,
+                                    isActiveTarget = (ns.activeQuestID ~= nil and currentQuestID ~= nil and currentQuestID == ns.activeQuestID),
+                                })
+                            end
+                        end
+                    end
+                end
+            end
+        end
+    end
+
+    return results
+end
+
+-- Esya adi ile aktif gorev hedeflerini eslestirir (canta esyasi tooltip'i icin)
+local function FindQuestsForItemName(itemName)
+    if not ns:IsSafeString(itemName) or itemName == "" then
+        return {}
+    end
+    local lowerItem = string.lower(itemName)
+    local okNum, numEntries = ns:TrySafeC("C_QuestLog", "GetNumQuestLogEntries")
+    if not okNum or not ns:IsSafeNumber(numEntries) then
+        return {}
+    end
+
+    local matches = {}
+    for idx = 1, numEntries do
+        local okInfo, info = ns:TrySafeC("C_QuestLog", "GetInfo", idx)
+        if okInfo and type(info) == "table" and not info.isHeader and not info.isHidden and ns:IsSafeNumber(info.questID) then
+            local okObj, objectives = ns:TrySafeC("C_QuestLog", "GetQuestObjectives", info.questID)
+            if okObj and type(objectives) == "table" then
+                for j = 1, #objectives do
+                    local obj = objectives[j]
+                    if type(obj) == "table" and ns:IsSafeString(obj.text) then
+                        if string.lower(obj.text):find(lowerItem, 1, true) then
+                            local prog = ExtractProgressText(obj.text)
+                            table.insert(matches, {
+                                questID = info.questID,
+                                title = info.title or ("Gorev #" .. tostring(info.questID)),
+                                progress = prog or (obj.finished and "Tamam" or nil),
+                            })
+                            break
+                        end
+                    end
+                end
+            end
+        end
+    end
+    return matches
+end
+
+-- Faz 2 & Ozellik 3: Coklu mob tooltip'i + canta esyasi tooltip'i + parti ilerlemesi
 -- Midnight'ta kisitli (secret) unit verisi nedeniyle bilgi alinamazsa sessizce satir eklemez.
 local function InstallTooltipHook()
-    if type(_G.TooltipDataProcessor) == "table"
-        and type(_G.TooltipDataProcessor.AddTooltipPostCall) == "function"
-        and Enum and Enum.TooltipDataType and Enum.TooltipDataType.Unit then
+    if type(_G.TooltipDataProcessor) ~= "table"
+        or type(_G.TooltipDataProcessor.AddTooltipPostCall) ~= "function"
+        or not Enum or not Enum.TooltipDataType then
+        return
+    end
+
+    -- 1) Unit (Mob) tooltip'i: birden fazla goreve lazimsa hepsini alt alta goster
+    if Enum.TooltipDataType.Unit then
         pcall(_G.TooltipDataProcessor.AddTooltipPostCall, Enum.TooltipDataType.Unit, function(tooltip)
             local db = ns.db or ns.DEFAULTS
             if not db.showMobTooltip then
@@ -298,30 +404,54 @@ local function InstallTooltipHook()
             if not okU or not ns:IsSafeString(unit) then
                 return
             end
-            local info = GetUnitQuestInfo(unit)
-            if not info then
+            local infos = GetUnitAllQuestInfos(unit)
+            if #infos == 0 then
                 return
             end
 
-            local qName = info.questTitle
-            if not ns:IsSafeString(qName) or qName == "" then
-                if ns:IsSafeNumber(info.questID) then
-                    local okT, fetched = ns:TrySafeC("C_QuestLog", "GetTitleForQuestID", info.questID)
-                    if okT and ns:IsSafeString(fetched) and fetched ~= "" then
-                        qName = fetched
+            for i = 1, #infos do
+                local info = infos[i]
+                local progPart = (ns:IsSafeString(info.progress) and info.progress ~= "") and (" " .. info.progress) or ""
+                local lineText = "Gorev: " .. info.questTitle .. progPart
+                if info.isActiveTarget then
+                    tooltip:AddLine("|cff33ff66" .. lineText .. "|r", 0.3, 1.0, 0.45)
+                else
+                    tooltip:AddLine("|cffffd100" .. lineText .. "|r", 1.0, 0.85, 0.25)
+                end
+
+                if ns.PartySync and ns:IsSafeNumber(info.questID) then
+                    local pp = ns.PartySync:GetPartyProgress(info.questID)
+                    if pp then
+                        local parts = {}
+                        for p = 1, #pp do
+                            table.insert(parts, pp[p].name .. ": " .. pp[p].text)
+                        end
+                        tooltip:AddLine("  Parti: " .. table.concat(parts, ", "), 0.55, 0.82, 1.0)
                     end
                 end
             end
-            if not ns:IsSafeString(qName) or qName == "" then
+        end)
+    end
+
+    -- 2) Item (Esya) tooltip'i: cantadaki gorev esyasinin hangi goreve ait oldugunu goster
+    if Enum.TooltipDataType.Item then
+        pcall(_G.TooltipDataProcessor.AddTooltipPostCall, Enum.TooltipDataType.Item, function(tooltip)
+            local db = ns.db or ns.DEFAULTS
+            if not db.showMobTooltip then
                 return
             end
-
-            local progPart = (ns:IsSafeString(info.progress) and info.progress ~= "") and (" " .. info.progress) or ""
-            local lineText = "Gorev: " .. qName .. progPart
-            if info.isActiveTarget then
-                tooltip:AddLine("|cff33ff66" .. lineText .. "|r", 0.3, 1.0, 0.45)
-            else
-                tooltip:AddLine("|cffffd100" .. lineText .. "|r", 1.0, 0.85, 0.25)
+            if tooltip ~= GameTooltip or not tooltip.GetItem then
+                return
+            end
+            local okI, itemName = pcall(tooltip.GetItem, tooltip)
+            if not okI or not ns:IsSafeString(itemName) or itemName == "" then
+                return
+            end
+            local matches = FindQuestsForItemName(itemName)
+            for i = 1, #matches do
+                local m = matches[i]
+                local progPart = m.progress and (" (" .. m.progress .. ")") or ""
+                tooltip:AddLine("|cffff9922Gorev: " .. m.title .. progPart .. "|r", 1.0, 0.65, 0.20)
             end
         end)
     end
