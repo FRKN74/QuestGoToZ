@@ -112,8 +112,9 @@ local function HideMinimapGuide()
     minimapOverlay.targetDot:Hide()
 end
 
--- Minimap uzerinde oyuncudan hedefe yesil cizgi cizer
-local function UpdateMinimapGuide(dxYards, dyYards, facing)
+-- Minimap uzerinde oyuncudan hedefe yon cizgisi cizer
+-- Ayni haritada YESIL, baska haritadaki goreve/cikisa giderken MAVI renk kullanir.
+local function UpdateMinimapGuide(dxYards, dyYards, facing, isCrossMap)
     if not minimapOverlay then
         CreateMinimapOverlay()
     end
@@ -157,6 +158,18 @@ local function UpdateMinimapGuide(dxYards, dyYards, facing)
     if pixDist < 4 then
         HideMinimapGuide()
         return
+    end
+
+    if isCrossMap then
+        -- Bulunulan harita disindaki goreve giden yol: MAVI
+        minimapOverlay.guideLine:SetColorTexture(0.22, 0.66, 1.0, 0.95)
+        minimapOverlay.targetRing:SetVertexColor(0.25, 0.72, 1.0, 0.95)
+        minimapOverlay.targetDot:SetColorTexture(0.35, 0.78, 1.0, 1.0)
+    else
+        -- Ayni haritadaki goreve giden yol: YESIL
+        minimapOverlay.guideLine:SetColorTexture(0.20, 1.0, 0.48, 0.92)
+        minimapOverlay.targetRing:SetVertexColor(0.25, 1.0, 0.55, 0.95)
+        minimapOverlay.targetDot:SetColorTexture(0.30, 1.0, 0.55, 1.0)
     end
 
     minimapOverlay.shadowLine:SetStartPoint("CENTER", Minimap, 0, 0)
@@ -223,8 +236,11 @@ local function CreateArrowFrame()
                 or (target.isAvailable and " |cff33ccff(Alinabilir)|r"
                 or (target.isComplete and " |cff33ff66(Teslim Hazir)|r" or "")))
             GameTooltip:SetText((target.title or "Gorev") .. statusTag, 1, 0.85, 0.2)
-            local zoneName = target.zoneName or (target.mapID and ns:GetMapName(target.mapID))
-            if zoneName then
+            local zoneName = target.finalZoneName or target.zoneName or (target.mapID and ns:GetMapName(target.mapID))
+            if target.isCrossMap then
+                local exitText = target.waypointText or ("Cikis noktasi -> " .. (zoneName or "Baska Harita"))
+                GameTooltip:AddLine(exitText, 0.30, 0.75, 1.0, true)
+            elseif zoneName then
                 GameTooltip:AddLine("Bolge: " .. zoneName, 0.75, 0.85, 1.0)
             end
 
@@ -373,16 +389,28 @@ function Arrow:UpdateOnce()
 
     local dxYards, dyYards, dist, targetAngle
     local tx, ty = target.x, target.y
+    local isCrossMap = (target.isCrossMap == true)
+        or (ns:IsSafeNumber(target.finalMapID) and target.finalMapID ~= playerMapID)
+        or (ns:IsSafeNumber(target.mapID) and target.mapID ~= playerMapID)
 
     if target.mapID ~= playerMapID then
         local resolvedSameMap = false
-        if not target.isAvailable and not target.isTrainer and ns:IsSafeNumber(target.questID) and target.questID > 0 then
-            local refreshed = ns:GetQuestLocation(target.questID)
-            if refreshed and refreshed.mapID == playerMapID then
-                target = refreshed
-                ns.activeTarget = refreshed
-                tx, ty = refreshed.x, refreshed.y
+        if not target.isAvailable and not target.isTrainer and not target.isCorpse and ns:IsSafeNumber(target.questID) and target.questID > 0 then
+            -- Once bulundugun haritadaki cikis/gecis noktasini al
+            local okExit, ex, ey = ns:TrySafeC("C_QuestLog", "GetNextWaypointForMap", target.questID, playerMapID)
+            if okExit and ns:IsSafeNumber(ex) and ns:IsSafeNumber(ey) and (ex > 0 or ey > 0) then
+                tx, ty = ex, ey
+                isCrossMap = true
                 resolvedSameMap = true
+            else
+                local refreshed = ns:GetQuestLocation(target.questID)
+                if refreshed and refreshed.mapID == playerMapID then
+                    target = refreshed
+                    ns.activeTarget = refreshed
+                    tx, ty = refreshed.x, refreshed.y
+                    isCrossMap = (refreshed.isCrossMap == true)
+                    resolvedSameMap = true
+                end
             end
         end
 
@@ -399,6 +427,7 @@ function Arrow:UpdateOnce()
                     dyYards = dNorth
                     dist = math.sqrt(dxYards * dxYards + dyYards * dyYards) * 0.9144
                     targetAngle = math.atan2(-dxYards, dyYards)
+                    isCrossMap = true
                 end
             end
             if not dist or not targetAngle then
@@ -418,8 +447,8 @@ function Arrow:UpdateOnce()
         dyYards = (py - ty) * mapHeight
     end
 
-    -- Minimap uzerinde hedefe yesil cizgiyi guncelle (combat disi/ici guvenli)
-    UpdateMinimapGuide(dxYards, dyYards, facing)
+    -- Minimap uzerinde hedefe yon cizgisini guncelle (ayni haritada YESIL, baska haritada MAVI)
+    UpdateMinimapGuide(dxYards, dyYards, facing, isCrossMap)
 
     -- Okun gorunurlugunu yalnizca combat disinda ac
     if not arrowFrame:IsShown() then

@@ -1,7 +1,7 @@
 local addonName, ns = ...
 
 ns.name = addonName
-ns.version = "1.0.0"
+ns.version = "1.0.1"
 
 -- Varsayilan SavedVariables profil ayarlari
 ns.DEFAULTS = {

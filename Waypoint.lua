@@ -11,8 +11,7 @@ local hookedModules = {}
 local lastKnownComplete = {}
 
 -- Bir gorevin hedef konumunu (mapID, x, y) cozumler.
--- 1) C_QuestLog.GetNextWaypoint(questID)
--- 2) Yoksa mevcut haritada C_QuestLog.GetNextWaypointForMap / C_QuestLog.GetQuestsOnMap(mapID)
+-- Gorev baska haritadaysa bulundugun haritadaki cikis noktasini (GetNextWaypointForMap) kullanir.
 function ns:GetQuestLocation(questID)
     if not self:IsSafeNumber(questID) then
         return nil
@@ -26,32 +25,76 @@ function ns:GetQuestLocation(questID)
     local okComp, isComplete = self:TrySafeC("C_QuestLog", "IsComplete", questID)
     isComplete = (okComp and isComplete == true) or false
 
-    -- 1. Yontem: C_QuestLog.GetNextWaypoint
+    local okPlayerMap, playerMapID = self:SafeC("C_Map", "GetBestMapForUnit", "player")
+    if not okPlayerMap or not self:IsSafeNumber(playerMapID) then
+        playerMapID = nil
+    end
+
+    -- 1. Yontem: C_QuestLog.GetNextWaypoint (gorevin asil hedef haritasi ve koordinati)
     local okNext, mapID, x, y = self:SafeC("C_QuestLog", "GetNextWaypoint", questID)
-    if okNext and self:IsSafeNumber(mapID) and self:IsSafeNumber(x) and self:IsSafeNumber(y) then
-        if x > 0 or y > 0 then
+    if okNext and self:IsSafeNumber(mapID) and self:IsSafeNumber(x) and self:IsSafeNumber(y) and (x > 0 or y > 0) then
+        -- Gorev baska haritadaysa bulundugun haritadaki cikis/gecis noktasini al
+        if playerMapID and mapID ~= playerMapID then
+            local okExit, ex, ey = self:TrySafeC("C_QuestLog", "GetNextWaypointForMap", questID, playerMapID)
+            local okTxt, wpText = self:TrySafeC("C_QuestLog", "GetNextWaypointText", questID)
+            local finalZone = self:GetMapName(mapID)
+            if okExit and self:IsSafeNumber(ex) and self:IsSafeNumber(ey) and (ex > 0 or ey > 0) then
+                return {
+                    questID = questID,
+                    mapID = playerMapID,
+                    x = ex,
+                    y = ey,
+                    finalMapID = mapID,
+                    finalZoneName = finalZone,
+                    waypointText = (okTxt and self:IsSafeString(wpText) and wpText ~= "") and wpText or nil,
+                    isCrossMap = true,
+                    title = title,
+                    zoneName = finalZone,
+                    isComplete = isComplete,
+                }
+            end
             return {
                 questID = questID,
                 mapID = mapID,
                 x = x,
                 y = y,
+                finalMapID = mapID,
+                finalZoneName = finalZone,
+                waypointText = (okTxt and self:IsSafeString(wpText) and wpText ~= "") and wpText or nil,
+                isCrossMap = true,
                 title = title,
+                zoneName = finalZone,
                 isComplete = isComplete,
             }
         end
+
+        return {
+            questID = questID,
+            mapID = mapID,
+            x = x,
+            y = y,
+            finalMapID = mapID,
+            isCrossMap = false,
+            title = title,
+            zoneName = self:GetMapName(mapID),
+            isComplete = isComplete,
+        }
     end
 
     -- 2. Yontem: Bulunulan haritada GetNextWaypointForMap / GetQuestsOnMap
-    local okPlayerMap, playerMapID = self:SafeC("C_Map", "GetBestMapForUnit", "player")
-    if okPlayerMap and self:IsSafeNumber(playerMapID) then
+    if playerMapID then
         local okForMap, fx, fy = self:TrySafeC("C_QuestLog", "GetNextWaypointForMap", questID, playerMapID)
         if okForMap and self:IsSafeNumber(fx) and self:IsSafeNumber(fy) and (fx > 0 or fy > 0) then
+            local okTxt, wpText = self:TrySafeC("C_QuestLog", "GetNextWaypointText", questID)
             return {
                 questID = questID,
                 mapID = playerMapID,
                 x = fx,
                 y = fy,
+                isCrossMap = (okTxt and self:IsSafeString(wpText) and wpText ~= "") and true or false,
+                waypointText = (okTxt and self:IsSafeString(wpText) and wpText ~= "") and wpText or nil,
                 title = title,
+                zoneName = self:GetMapName(playerMapID),
                 isComplete = isComplete,
             }
         end
@@ -67,7 +110,9 @@ function ns:GetQuestLocation(questID)
                             mapID = playerMapID,
                             x = info.x,
                             y = info.y,
+                            isCrossMap = false,
                             title = title,
+                            zoneName = self:GetMapName(playerMapID),
                             isComplete = isComplete,
                         }
                     end
@@ -122,6 +167,13 @@ function ns:PrintQuestGuidance(loc)
 
     if loc.isComplete then
         self:Print("Teslim edilmeye hazir: |cff33ff66" .. (loc.title or "") .. "|r" .. whereText)
+        return
+    end
+
+    if loc.isCrossMap then
+        local dest = loc.finalZoneName or loc.zoneName or "Baska Harita"
+        local exitHint = loc.waypointText and (" -> " .. loc.waypointText) or (" -> " .. dest .. " cikisi")
+        self:Print("|cff38a8ff[Baska Harita]|r |cffffff00" .. (loc.title or "") .. "|r" .. exitHint .. whereText)
         return
     end
 
@@ -672,7 +724,12 @@ ns:RegisterCallback("QUEST_WATCH_LIST_CHANGED", function()
 end)
 
 ns:RegisterCallback("ZONE_CHANGED_NEW_AREA", function()
-    CheckActiveQuestUpdate()
+    -- Baska haritaya gecildiginde aktif gorevin yeni haritadaki cikis/hedef noktasini guncelle
+    if ns.activeQuestID and ns.activeTarget and not ns.activeTarget.isTrainer and not ns.activeTarget.isCorpse and not ns.activeTarget.isAvailable then
+        ns:SetQuestWaypoint(ns.activeQuestID, true)
+    else
+        CheckActiveQuestUpdate()
+    end
     Waypoint:RequestTrackerRefresh()
     Waypoint:RefreshWorldMapCompletedCircles()
 end)

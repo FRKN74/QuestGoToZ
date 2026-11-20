@@ -4,9 +4,9 @@ local Nearby = {}
 ns.Nearby = Nearby
 
 local MAX_VISIBLE_HEIGHT = 295
-local ROW_HEIGHT = 22
-local GROUP_HEADER_HEIGHT = 20
-local HEADER_HEIGHT = 24
+local ROW_HEIGHT = 23
+local GROUP_HEADER_HEIGHT = 21
+local HEADER_HEIGHT = 25
 local STATUS_BAR_HEIGHT = 42
 local FRAME_WIDTH = 276
 local CONTENT_WIDTH = FRAME_WIDTH - 16
@@ -107,7 +107,9 @@ local function ShowQuestTooltip(anchor, row)
     end
 
     if row.groupType == "trainer" then
-        GameTooltip:AddLine("Durum: Sinifina en yakin Class Trainer", 0.90, 0.55, 1.0)
+        GameTooltip:AddLine("Durum: Sinifina en yakin egitmen", 0.90, 0.55, 1.0)
+    elseif row.groupType == "service" then
+        GameTooltip:AddLine("Durum: En yakin hizmet noktasi", 0.55, 0.85, 1.0)
     elseif row.groupType == "completed" then
         GameTooltip:AddLine("Durum: Tamamlandi (Teslim NPC'sine git)", 0.3, 1.0, 0.4)
     elseif row.groupType == "available" then
@@ -220,15 +222,22 @@ local function CreateSlot(parent)
 
     row.goBtn = goBtn
 
-    local titleText = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+    local titleText = row:CreateFontString(nil, "OVERLAY")
+    titleText:SetFont("Fonts\\ARIALN.TTF", 12, "")
+    titleText:SetShadowColor(0, 0, 0, 1.0)
+    titleText:SetShadowOffset(1, -1)
+    titleText:SetTextColor(0.95, 0.96, 1.0)
     titleText:SetPoint("LEFT", row, "LEFT", 22, 0)
     titleText:SetPoint("RIGHT", row, "RIGHT", -56, 0)
     titleText:SetJustifyH("LEFT")
     titleText:SetWordWrap(false)
     row.titleText = titleText
 
-    local distText = row:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-    distText:SetPoint("RIGHT", row, "RIGHT", -4, 0)
+    local distText = row:CreateFontString(nil, "OVERLAY")
+    distText:SetFont("Fonts\\ARIALN.TTF", 11, "")
+    distText:SetShadowColor(0, 0, 0, 1.0)
+    distText:SetShadowOffset(1, -1)
+    distText:SetPoint("RIGHT", row, "RIGHT", -5, 0)
     distText:SetJustifyH("RIGHT")
     row.distText = distText
 
@@ -531,8 +540,8 @@ local function CreateNearbyFrame()
         edgeSize = 12,
         insets = { left = 3, right = 3, top = 3, bottom = 3 },
     })
-    f:SetBackdropColor(0.04, 0.06, 0.10, 0.48)
-    f:SetBackdropBorderColor(0.35, 0.55, 0.80, 0.42)
+    f:SetBackdropColor(0.04, 0.06, 0.10, 0.74)
+    f:SetBackdropBorderColor(0.35, 0.55, 0.80, 0.60)
 
     f:RegisterForDrag("LeftButton")
     f:SetScript("OnDragStart", function(selfFrame)
@@ -546,7 +555,11 @@ local function CreateNearbyFrame()
         SaveNearbyPosition(selfFrame)
     end)
 
-    local header = f:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+    local header = f:CreateFontString(nil, "OVERLAY")
+    header:SetFont("Fonts\\ARIALN.TTF", 13, "")
+    header:SetShadowColor(0, 0, 0, 1.0)
+    header:SetShadowOffset(1, -1)
+    header:SetTextColor(1.0, 0.86, 0.28)
     header:SetPoint("TOPLEFT", f, "TOPLEFT", 10, -7)
     header:SetPoint("RIGHT", f, "RIGHT", -118, 0)
     header:SetJustifyH("LEFT")
@@ -556,7 +569,7 @@ local function CreateNearbyFrame()
 
     -- Ozellik 2: Tek "Siradaki" butonu (en yuksek puanli gorevi secer, nedenini tooltip'te gosterir)
     local nextBtn = CreateFrame("Button", nil, f)
-    nextBtn:SetSize(54, 16)
+    nextBtn:SetSize(56, 16)
     nextBtn:SetPoint("TOPRIGHT", f, "TOPRIGHT", -8, -5)
     local nextBg = nextBtn:CreateTexture(nil, "BACKGROUND")
     nextBg:SetAllPoints()
@@ -566,13 +579,15 @@ local function CreateNearbyFrame()
     nextHl:SetAllPoints()
     nextHl:SetColorTexture(0.35, 0.85, 0.45, 0.28)
     local nextTxt = nextBtn:CreateFontString(nil, "OVERLAY")
-    nextTxt:SetFont("Fonts\\FRIZQT__.TTF", 9, "OUTLINE")
+    nextTxt:SetFont("Fonts\\ARIALN.TTF", 11, "")
+    nextTxt:SetShadowColor(0, 0, 0, 1.0)
+    nextTxt:SetShadowOffset(1, -1)
     nextTxt:SetAllPoints()
     nextTxt:SetText("Siradaki")
-    nextTxt:SetTextColor(0.85, 1.0, 0.88)
+    nextTxt:SetTextColor(0.90, 1.0, 0.92)
     nextBtn:SetScript("OnClick", function()
         if ns:IsInCombat() then
-            ns:Print("Combat sirasinda UI degisikligi engellendi.")
+            ns:Print("Savas sirasinda UI degisikligi engellendi.")
             return
         end
         if ns.SmartQuest then
@@ -1138,7 +1153,7 @@ local function CollectZoneGroupedQuests(playerMapID, px, py, mapWidth, mapHeight
     if nearestTrainer then
         table.insert(sections, {
             key = "nearest_trainer",
-            label = "En Yakin Class Trainer",
+            label = "En Yakin Sinif Egitmeni",
             color = "|cffff88ff",
             bgR = 0.22, bgG = 0.08, bgB = 0.26,
             items = { nearestTrainer },
@@ -1238,7 +1253,7 @@ function Nearby:ScanOnce()
         hSlot:SetHeight(GROUP_HEADER_HEIGHT)
         hSlot:ClearAllPoints()
         hSlot:SetPoint("TOPLEFT", scrollChild, "TOPLEFT", 0, -yCursor)
-        hSlot.bg:SetColorTexture(sec.bgR, sec.bgG, sec.bgB, 0.40)
+        hSlot.bg:SetColorTexture(sec.bgR, sec.bgG, sec.bgB, 0.62)
         hSlot.highlightTex:SetAlpha(0.25)
         hSlot.goBtn:Hide()
         hSlot.titleText:ClearAllPoints()
@@ -1282,7 +1297,11 @@ function Nearby:ScanOnce()
                 rSlot:SetPoint("TOPLEFT", scrollChild, "TOPLEFT", 0, -yCursor)
 
                 local isActiveTarget = (ns.activeQuestID == item.questID)
-                rSlot.bg:SetColorTexture(1, 1, 1, isActiveTarget and 0.14 or 0.05)
+                if isActiveTarget then
+                    rSlot.bg:SetColorTexture(0.10, 0.30, 0.18, 0.58)
+                else
+                    rSlot.bg:SetColorTexture(0.03, 0.05, 0.09, 0.42)
+                end
                 rSlot.highlightTex:SetAlpha(1)
 
                 -- En solda saga dogru bakan mini ok butonu

@@ -2,7 +2,7 @@
 ## Title: QuestGoToZ
 ## Notes: Gorev yonlendirme, yakindaki gorevler ve mesafe oku (World of Warcraft: Forever / Midnight)
 ## Author: QuestGoToZ
-## Version: 1.0.0
+## Version: 1.0.1
 ## SavedVariables: QuestGoToZDB
 
 Core.lua
