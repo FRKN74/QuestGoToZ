@@ -1,0 +1,10 @@
+# Yerel ayarlar ve derleme ciktilari
+tools/manager.cfg
+tools/manager_config.json
+tools/builds/
+tools/__pycache__/
+*.exe
+*.zip
+*.bak
+.DS_Store
+Thumbs.db
