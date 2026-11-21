@@ -24,6 +24,53 @@ local scanTicker = nil
 local notifiedQuests = {}
 local lastRequestedQuestLineMap = nil
 
+-- XP/saat ve tahmini level suresi takibi
+local xpSessionStart = nil
+local xpSessionGained = 0
+local lastObservedXP = nil
+local lastObservedMaxXP = nil
+
+local function RecordXPProgress(curXp, maxXp)
+    if not ns:IsSafeNumber(curXp) or not ns:IsSafeNumber(maxXp) or maxXp <= 0 then
+        return
+    end
+    local now = (type(GetTime) == "function") and GetTime() or 0
+    if not xpSessionStart then
+        xpSessionStart = now
+        lastObservedXP = curXp
+        lastObservedMaxXP = maxXp
+        return
+    end
+    if lastObservedXP then
+        if curXp > lastObservedXP then
+            xpSessionGained = xpSessionGained + (curXp - lastObservedXP)
+        elseif curXp < lastObservedXP and lastObservedMaxXP and lastObservedMaxXP > 0 then
+            -- Seviye atlandi
+            xpSessionGained = xpSessionGained + math.max(0, lastObservedMaxXP - lastObservedXP) + curXp
+        end
+    end
+    lastObservedXP = curXp
+    lastObservedMaxXP = maxXp
+end
+
+local function GetXPRateAndETA(curXp, maxXp)
+    if not xpSessionStart or xpSessionGained <= 0 or not ns:IsSafeNumber(curXp) or not ns:IsSafeNumber(maxXp) or maxXp <= 0 then
+        return nil, nil
+    end
+    local now = (type(GetTime) == "function") and GetTime() or 0
+    local elapsedSec = now - xpSessionStart
+    if elapsedSec < 15 then
+        return nil, nil
+    end
+    local xpPerHour = (xpSessionGained / elapsedSec) * 3600
+    if xpPerHour <= 0 then
+        return nil, nil
+    end
+    local remXp = math.max(0, maxXp - curXp)
+    local etaMin = (remXp / xpPerHour) * 60
+    return xpPerHour, etaMin
+end
+
 -- Katlanabilir grup durumlari (anahtar -> boolean)
 local collapsedGroups = {}
 
@@ -50,8 +97,86 @@ function Nearby:ApplyPosition()
     local sz = (ns.db and ns.db.nearbySize) or ns.DEFAULTS.nearbySize
     nearbyFrame:ClearAllPoints()
     nearbyFrame:SetPoint(pos.point, UIParent, pos.relativePoint, pos.x, pos.y)
-    nearbyFrame:SetSize(sz.width or FRAME_WIDTH, sz.height or 360)
+    local isCollapsed = ns.db and ns.db.panelCollapsed
+    if isCollapsed then
+        nearbyFrame:SetSize(sz.width or FRAME_WIDTH, HEADER_HEIGHT + 4)
+    else
+        nearbyFrame:SetSize(sz.width or FRAME_WIDTH, sz.height or 360)
+    end
+    self:ApplyAppearance()
     self:SyncContentWidth()
+end
+
+function Nearby:ApplyAppearance()
+    if not nearbyFrame then
+        return
+    end
+    local db = ns.db or ns.DEFAULTS
+    local pct = ns:IsSafeNumber(db.panelAlpha) and db.panelAlpha or 35
+    local a = math.max(0.05, math.min(0.95, pct / 100))
+
+    nearbyFrame:SetBackdropColor(0.03, 0.05, 0.09, a)
+    nearbyFrame:SetBackdropBorderColor(1.0, 1.0, 1.0, math.min(0.28, a * 0.45 + 0.06))
+
+    if statusBarFrame and statusBarFrame.barBg then
+        statusBarFrame.barBg:SetColorTexture(0.02, 0.04, 0.08, a * 0.75)
+    end
+    if nearbyFrame.searchBg then
+        nearbyFrame.searchBg:SetColorTexture(0.02, 0.04, 0.08, a * 0.85)
+    end
+
+    local isCollapsed = db.panelCollapsed and true or false
+    if nearbyFrame.collapseTxt then
+        nearbyFrame.collapseTxt:SetText(isCollapsed and "+" or "-")
+    end
+
+    if not ns:IsInCombat() then
+        if db.showQuestList == false then
+            nearbyFrame:Hide()
+            return
+        end
+        if statusBarFrame then
+            if isCollapsed then statusBarFrame:Hide() else statusBarFrame:Show() end
+        end
+        if nearbyFrame.searchHolder then
+            if isCollapsed then nearbyFrame.searchHolder:Hide() else nearbyFrame.searchHolder:Show() end
+        end
+        if scrollFrame then
+            if isCollapsed then scrollFrame:Hide() else scrollFrame:Show() end
+        end
+        if nearbyFrame.resizeBtn then
+            if isCollapsed or db.locked then nearbyFrame.resizeBtn:Hide() else nearbyFrame.resizeBtn:Show() end
+        end
+        local sz = db.nearbySize or ns.DEFAULTS.nearbySize
+        if isCollapsed then
+            nearbyFrame:SetHeight(HEADER_HEIGHT + 4)
+        else
+            nearbyFrame:SetHeight(sz.height or 360)
+        end
+    end
+end
+
+function Nearby:ToggleCollapse()
+    if ns:IsInCombat() or not ns.db then
+        return
+    end
+    ns.db.panelCollapsed = not ns.db.panelCollapsed
+    self:ApplyAppearance()
+    if not ns.db.panelCollapsed then
+        self:ScanOnce()
+    end
+end
+
+function Nearby:ToggleVisibility()
+    if ns:IsInCombat() or not ns.db then
+        return
+    end
+    ns.db.showQuestList = not ns.db.showQuestList
+    self:ApplyAppearance()
+    if ns.db.showQuestList then
+        self:ScanOnce()
+    end
+    ns:FireCallback("CONFIG_CHANGED")
 end
 
 function Nearby:SyncContentWidth()
@@ -119,6 +244,14 @@ local function ShowQuestTooltip(anchor, row)
         GameTooltip:AddLine("Durum: Alinmamis (Gorev veren NPC)", 0.25, 0.85, 1.0)
     else
         GameTooltip:AddLine("Durum: Yapilmakta olan gorev", 1.0, 0.85, 0.25)
+    end
+
+    if row.groupType ~= "trainer" and row.groupType ~= "service" then
+        if row.isMain then
+            GameTooltip:AddLine("Tur: Ana Gorev (Hikaye)", 1.0, 0.62, 0.14)
+        else
+            GameTooltip:AddLine("Tur: Yan Gorev", 0.78, 0.82, 0.90)
+        end
     end
 
     if row.fallbackLoc and ns:IsSafeNumber(row.fallbackLoc.x) and ns:IsSafeNumber(row.fallbackLoc.y)
@@ -366,7 +499,8 @@ local function CreateStatusBar(parent)
 
     local barBg = bar:CreateTexture(nil, "BACKGROUND")
     barBg:SetAllPoints()
-    barBg:SetColorTexture(0.02, 0.04, 0.08, 0.36)
+    barBg:SetColorTexture(0.02, 0.04, 0.08, 0.26)
+    bar.barBg = barBg
 
     -- 1. Satir: Level + XP Progress Bar
     local lvlText = bar:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
@@ -413,6 +547,11 @@ local function CreateStatusBar(parent)
             local rem = math.max(0, maxXp - curXp)
             GameTooltip:AddLine(string.format("XP: %s / %s (%.1f%%)", FormatShortNumber(curXp), FormatShortNumber(maxXp), pct), 0.9, 0.9, 0.9)
             GameTooltip:AddLine("Sonraki seviye icin kalan: " .. FormatShortNumber(rem) .. " XP", 0.75, 0.85, 1.0)
+            local xpPerHour, etaMin = GetXPRateAndETA(curXp, maxXp)
+            if xpPerHour and etaMin then
+                local etaStr = (etaMin >= 60) and string.format("~%.1f sa", etaMin / 60) or string.format("~%d dk", math.max(1, math.floor(etaMin + 0.5)))
+                GameTooltip:AddLine(string.format("Hiz: %s XP/saat  |  Tahmini: %s", FormatShortNumber(xpPerHour), etaStr), 0.35, 1.0, 0.55)
+            end
             if okRest and ns:IsSafeNumber(restXp) and restXp > 0 then
                 GameTooltip:AddLine("Dinlenmis (Rested): +" .. FormatShortNumber(restXp) .. " XP", 0.35, 0.75, 1.0)
             end
@@ -490,13 +629,17 @@ local function CreateStatusBar(parent)
     return bar
 end
 
-function Nearby:UpdateStatusBar()
+function Nearby:UpdateStatusBar(forcedLevel)
     if not statusBarFrame then
         return
     end
 
-    -- Level & XP
+    -- Level & XP (pcall + combat-safe)
     local okLvl, lvl = ns:SafeGlobal("UnitLevel", "player")
+    if ns:IsSafeNumber(forcedLevel) and forcedLevel > 0 then
+        lvl = forcedLevel
+        okLvl = true
+    end
     local okXp, curXp = ns:SafeGlobal("UnitXP", "player")
     local okMax, maxXp = ns:SafeGlobal("UnitXPMax", "player")
     local okRest, restXp = ns:SafeGlobal("GetXPExhaustion")
@@ -504,15 +647,23 @@ function Nearby:UpdateStatusBar()
     statusBarFrame.lvlText:SetText("Lv " .. tostring((okLvl and ns:IsSafeNumber(lvl)) and lvl or "?"))
 
     if okXp and okMax and ns:IsSafeNumber(curXp) and ns:IsSafeNumber(maxXp) and maxXp > 0 then
-        local pct = (curXp / maxXp) * 100
+        RecordXPProgress(curXp, maxXp)
+        local safeCur = math.max(0, math.min(curXp, maxXp))
+        local pct = (safeCur / maxXp) * 100
         statusBarFrame.xpBar:SetMinMaxValues(0, maxXp)
-        statusBarFrame.xpBar:SetValue(curXp)
+        statusBarFrame.xpBar:SetValue(safeCur)
         if okRest and ns:IsSafeNumber(restXp) and restXp > 0 then
             statusBarFrame.xpBar:SetStatusBarColor(0.18, 0.55, 0.95, 0.95)
         else
             statusBarFrame.xpBar:SetStatusBarColor(0.52, 0.26, 0.86, 0.95)
         end
-        statusBarFrame.xpText:SetText(string.format("%.0f%% (%s/%s)", pct, FormatShortNumber(curXp), FormatShortNumber(maxXp)))
+        local _, etaMin = GetXPRateAndETA(safeCur, maxXp)
+        if etaMin then
+            local etaStr = (etaMin >= 60) and string.format("~%.1fs", etaMin / 60) or string.format("~%ddk", math.max(1, math.floor(etaMin + 0.5)))
+            statusBarFrame.xpText:SetText(string.format("%.0f%% (%s/%s) %s", pct, FormatShortNumber(safeCur), FormatShortNumber(maxXp), etaStr))
+        else
+            statusBarFrame.xpText:SetText(string.format("%.0f%% (%s/%s)", pct, FormatShortNumber(safeCur), FormatShortNumber(maxXp)))
+        end
     else
         statusBarFrame.xpBar:SetMinMaxValues(0, 1)
         statusBarFrame.xpBar:SetValue(1)
@@ -520,7 +671,11 @@ function Nearby:UpdateStatusBar()
         statusBarFrame.xpText:SetText("MAX SEVIYE")
     end
 
-    -- Meslekler (GetProfessions + GetProfessionInfo)
+    -- Meslekler (layout/Show/Hide yalnizca savas disinda guncellenir)
+    if ns:IsInCombat() then
+        return
+    end
+
     local profs = {}
     local okP, p1, p2, arch, fish, cook = ns:SafeGlobal("GetProfessions")
     if okP then
@@ -551,8 +706,8 @@ function Nearby:UpdateStatusBar()
     end
 
     statusBarFrame.noProfText:Hide()
-    local totalW = CONTENT_WIDTH - 6
-    local slotW = math.floor(totalW / count)
+    local totalW = math.max(120, CONTENT_WIDTH - 6)
+    local slotW = math.max(36, math.floor(totalW / count))
 
     for i = 1, #profSlots do
         local slot = profSlots[i]
@@ -596,16 +751,22 @@ local function CreateNearbyFrame()
     f:SetSize(FRAME_WIDTH, HEADER_HEIGHT + STATUS_BAR_HEIGHT + 24)
     f:SetFrameStrata("MEDIUM")
     f:SetClampedToScreen(true)
+    -- Modern 1 px ince kenarlikli cam-transparan pencere
     f:SetBackdrop({
-        bgFile = "Interface\\DialogFrame\\UI-DialogBox-Background-Dark",
-        edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
-        tile = true,
-        tileSize = 16,
-        edgeSize = 12,
-        insets = { left = 3, right = 3, top = 3, bottom = 3 },
+        bgFile = "Interface\\Buttons\\WHITE8X8",
+        edgeFile = "Interface\\Buttons\\WHITE8X8",
+        edgeSize = 1,
+        insets = { left = 1, right = 1, top = 1, bottom = 1 },
     })
-    f:SetBackdropColor(0.04, 0.06, 0.10, 0.74)
-    f:SetBackdropBorderColor(0.35, 0.55, 0.80, 0.60)
+    f:SetBackdropColor(0.03, 0.05, 0.09, 0.35)
+    f:SetBackdropBorderColor(1.0, 1.0, 1.0, 0.18)
+
+    -- Ust baslik altinda ince 1 px ayirici cizgi
+    local headerSep = f:CreateTexture(nil, "ARTWORK")
+    headerSep:SetHeight(1)
+    headerSep:SetPoint("TOPLEFT", f, "TOPLEFT", 6, -(HEADER_HEIGHT))
+    headerSep:SetPoint("TOPRIGHT", f, "TOPRIGHT", -6, -(HEADER_HEIGHT))
+    headerSep:SetColorTexture(1.0, 1.0, 1.0, 0.10)
 
     f:RegisterForDrag("LeftButton")
     f:SetScript("OnDragStart", function(selfFrame)
@@ -625,16 +786,49 @@ local function CreateNearbyFrame()
     header:SetShadowOffset(1, -1)
     header:SetTextColor(1.0, 0.86, 0.28)
     header:SetPoint("TOPLEFT", f, "TOPLEFT", 10, -7)
-    header:SetPoint("RIGHT", f, "RIGHT", -118, 0)
+    header:SetPoint("RIGHT", f, "RIGHT", -138, 0)
     header:SetJustifyH("LEFT")
     header:SetWordWrap(false)
     header:SetText("Gorevler")
     f.header = header
 
+    -- Pencereyi ac/kapa (daralt/genislet) butonu [-] / [+]
+    local collapseBtn = CreateFrame("Button", nil, f)
+    collapseBtn:SetSize(18, 16)
+    collapseBtn:SetPoint("TOPRIGHT", f, "TOPRIGHT", -7, -5)
+    local colBg = collapseBtn:CreateTexture(nil, "BACKGROUND")
+    colBg:SetAllPoints()
+    colBg:SetColorTexture(0.15, 0.22, 0.34, 0.72)
+    local colHl = collapseBtn:CreateTexture(nil, "HIGHLIGHT")
+    colHl:SetAllPoints()
+    colHl:SetColorTexture(0.35, 0.65, 1.0, 0.30)
+    local colTxt = collapseBtn:CreateFontString(nil, "OVERLAY")
+    colTxt:SetFont("Fonts\\ARIALN.TTF", 12, "")
+    colTxt:SetShadowColor(0, 0, 0, 1.0)
+    colTxt:SetShadowOffset(1, -1)
+    colTxt:SetAllPoints()
+    colTxt:SetText("-")
+    colTxt:SetTextColor(0.92, 0.96, 1.0)
+    f.collapseTxt = colTxt
+    collapseBtn:SetScript("OnClick", function()
+        Nearby:ToggleCollapse()
+    end)
+    collapseBtn:SetScript("OnEnter", function(selfBtn)
+        if GameTooltip then
+            GameTooltip:SetOwner(selfBtn, "ANCHOR_TOP")
+            GameTooltip:SetText("Gorev Penceresini Ac / Kapa", 1, 0.85, 0.2)
+            GameTooltip:Show()
+        end
+    end)
+    collapseBtn:SetScript("OnLeave", function()
+        if GameTooltip then GameTooltip:Hide() end
+    end)
+    f.collapseBtn = collapseBtn
+
     -- Ozellik 2: Tek "Siradaki" butonu (en yuksek puanli gorevi secer, nedenini tooltip'te gosterir)
     local nextBtn = CreateFrame("Button", nil, f)
-    nextBtn:SetSize(56, 16)
-    nextBtn:SetPoint("TOPRIGHT", f, "TOPRIGHT", -8, -5)
+    nextBtn:SetSize(54, 16)
+    nextBtn:SetPoint("RIGHT", collapseBtn, "LEFT", -4, 0)
     local nextBg = nextBtn:CreateTexture(nil, "BACKGROUND")
     nextBg:SetAllPoints()
     nextBg:SetColorTexture(0.18, 0.42, 0.24, 0.88)
@@ -694,7 +888,9 @@ local function CreateNearbyFrame()
     searchHolder:SetHeight(SEARCH_BAR_HEIGHT)
     local sBg = searchHolder:CreateTexture(nil, "BACKGROUND")
     sBg:SetAllPoints()
-    sBg:SetColorTexture(0.02, 0.04, 0.08, 0.55)
+    sBg:SetColorTexture(0.02, 0.04, 0.08, 0.30)
+    f.searchHolder = searchHolder
+    f.searchBg = sBg
 
     local sBox = CreateFrame("EditBox", "QuestGoToZSearchBox", searchHolder)
     sBox:SetPoint("TOPLEFT", searchHolder, "TOPLEFT", 6, -2)
@@ -1042,7 +1238,8 @@ local function CollectZoneGroupedQuests(playerMapID, px, py, mapWidth, mapHeight
     local foundByID = {}
     local currentZoneGroups = {
         completed = {},
-        active = {},
+        main = {},
+        side = {},
         available = {},
     }
     local otherZoneBuckets = {}
@@ -1070,10 +1267,13 @@ local function CollectZoneGroupedQuests(playerMapID, px, py, mapWidth, mapHeight
         if okCol and type(col) == "table" and ns:IsSafeNumber(col.r) and ns:IsSafeNumber(col.g) and ns:IsSafeNumber(col.b) then
             r, g, b = col.r, col.g, col.b
         end
-        return string.format("|cff%02x%02x%02x[%d]|r", math.floor(r * 255), math.floor(g * 255), math.floor(b * 255), level)
+        local rByte = math.max(0, math.min(255, math.floor(r * 255)))
+        local gByte = math.max(0, math.min(255, math.floor(g * 255)))
+        local bByte = math.max(0, math.min(255, math.floor(b * 255)))
+        return string.format("|cff%02x%02x%02x[%d]|r", rByte, gByte, bByte, level)
     end
 
-    local function AddItem(questID, groupType, title, qMapID, tx, ty, headerZoneName, questLevel, suggestedGroup)
+    local function AddItem(questID, groupType, title, qMapID, tx, ty, headerZoneName, questLevel, suggestedGroup, rawQuestInfo)
         if not ns:IsSafeNumber(questID) or foundByID[questID] then
             return
         end
@@ -1103,10 +1303,13 @@ local function CollectZoneGroupedQuests(playerMapID, px, py, mapWidth, mapHeight
             isInCurrentZone = true
         end
 
+        local isMain = ns:IsMainQuest(questID, rawQuestInfo, qMapID or playerMapID)
+
         local entry = {
             questID = questID,
             title = title,
             groupType = groupType,
+            isMain = isMain,
             isComplete = (groupType == "completed"),
             isAvailable = (groupType == "available"),
             mapID = qMapID,
@@ -1123,7 +1326,11 @@ local function CollectZoneGroupedQuests(playerMapID, px, py, mapWidth, mapHeight
         }
 
         if isInCurrentZone then
-            table.insert(currentZoneGroups[groupType], entry)
+            if groupType == "active" then
+                table.insert(isMain and currentZoneGroups.main or currentZoneGroups.side, entry)
+            else
+                table.insert(currentZoneGroups[groupType], entry)
+            end
         else
             if not otherZoneBuckets[zoneName] then
                 otherZoneBuckets[zoneName] = {}
@@ -1150,9 +1357,9 @@ local function CollectZoneGroupedQuests(playerMapID, px, py, mapWidth, mapHeight
                     local grp = (okComp and isComplete == true) and "completed" or "active"
                     local loc = ns:GetQuestLocation(qid)
                     if loc then
-                        AddItem(qid, grp, info.title or loc.title, loc.mapID, loc.x, loc.y, currentHeaderName, info.level, info.suggestedGroup)
+                        AddItem(qid, grp, info.title or loc.title, loc.mapID, loc.x, loc.y, currentHeaderName, info.level, info.suggestedGroup, info)
                     else
-                        AddItem(qid, grp, info.title, nil, nil, nil, currentHeaderName, info.level, info.suggestedGroup)
+                        AddItem(qid, grp, info.title, nil, nil, nil, currentHeaderName, info.level, info.suggestedGroup, info)
                     end
                 end
             end
@@ -1194,6 +1401,9 @@ local function CollectZoneGroupedQuests(playerMapID, px, py, mapWidth, mapHeight
     end
 
     local function SortItems(a, b)
+        if a.isMain ~= b.isMain then
+            return a.isMain == true
+        end
         local da = a.dist or math.huge
         local dbVal = b.dist or math.huge
         if da ~= dbVal then
@@ -1206,7 +1416,8 @@ local function CollectZoneGroupedQuests(playerMapID, px, py, mapWidth, mapHeight
     end
 
     table.sort(currentZoneGroups.completed, SortItems)
-    table.sort(currentZoneGroups.active, SortItems)
+    table.sort(currentZoneGroups.main, SortItems)
+    table.sort(currentZoneGroups.side, SortItems)
     table.sort(currentZoneGroups.available, SortItems)
     table.sort(otherZoneOrder)
     for i = 1, #otherZoneOrder do
@@ -1216,6 +1427,53 @@ local function CollectZoneGroupedQuests(playerMapID, px, py, mapWidth, mapHeight
     -- Render edilecek bolum listesini olustur
     local sections = {}
     local db = ns.db or ns.DEFAULTS
+
+    -- Levelling Modu: Alinmamis yuksek XP/Ana gorevler ([AL!]) + mevcut gorevler ([YAP] / [Teslim])
+    if db.levelingMode and ns.SmartQuest and playerMapID and mapWidth then
+        local candidates = ns.SmartQuest:EvaluateAllCandidates(nil)
+        if #candidates > 0 then
+            local lvlItems = {}
+            local limit = math.min(#candidates, 10)
+            for i = 1, limit do
+                local c = candidates[i]
+                local actionTag = c.isAvailable and "|cff33ccff[AL!]|r "
+                    or (c.isComplete and "|cff33ff66[Teslim]|r " or "|cffffd100[YAP]|r ")
+                table.insert(lvlItems, {
+                    questID = c.questID,
+                    title = actionTag .. c.title,
+                    groupType = c.isAvailable and "available" or (c.isComplete and "completed" or "active"),
+                    isMain = c.isMain,
+                    isComplete = c.isComplete,
+                    isAvailable = c.isAvailable,
+                    mapID = c.mapID,
+                    x = c.x,
+                    y = c.y,
+                    dist = c.dist,
+                    hasLocation = true,
+                    isNearby = (c.dist <= radius),
+                    zoneName = currentZoneName,
+                    isInCurrentZone = true,
+                    difficultyTag = ns.Comfort and ns.Comfort:GetQuestDifficultyTag(c.questID, nil) or nil,
+                    isDroppable = false,
+                })
+            end
+            -- Bulundugun bolge seviyene gore kucuk kaldiysa siradaki bolgeyi tek satir olarak en uste ekle
+            if ns.Comfort then
+                local nextZone = ns.Comfort:GetRecommendedNextZone(playerMapID)
+                if nextZone then
+                    table.insert(lvlItems, 1, nextZone)
+                end
+            end
+
+            table.insert(sections, {
+                key = "leveling_plan",
+                label = "Levelling ile Devam",
+                color = "|cff44ffaa",
+                bgR = 0.05, bgG = 0.28, bgB = 0.20,
+                items = lvlItems,
+            })
+        end
+    end
 
     -- Ozellik 1: Birlikte yapilabilecek gorevler grubu
     if db.showClusters and ns.SmartQuest and playerMapID and mapWidth then
@@ -1262,13 +1520,22 @@ local function CollectZoneGroupedQuests(playerMapID, px, py, mapWidth, mapHeight
             items = currentZoneGroups.completed,
         })
     end
-    if #currentZoneGroups.active > 0 then
+    if #currentZoneGroups.main > 0 then
         table.insert(sections, {
-            key = "cur_active",
-            label = currentZoneName .. " - Alinan",
-            color = "|cffffd100",
-            bgR = 0.25, bgG = 0.20, bgB = 0.06,
-            items = currentZoneGroups.active,
+            key = "cur_main",
+            label = currentZoneName .. " - Ana Gorevler",
+            color = "|cffff9e22",
+            bgR = 0.30, bgG = 0.16, bgB = 0.04,
+            items = currentZoneGroups.main,
+        })
+    end
+    if #currentZoneGroups.side > 0 then
+        table.insert(sections, {
+            key = "cur_side",
+            label = currentZoneName .. " - Yan Gorevler",
+            color = "|cffffd955",
+            bgR = 0.22, bgG = 0.19, bgB = 0.06,
+            items = currentZoneGroups.side,
         })
     end
     if #currentZoneGroups.available > 0 then
@@ -1354,14 +1621,28 @@ function Nearby:ScanOnce()
         return
     end
 
+    local db = ns.db or ns.DEFAULTS
+    if db.showQuestList == false then
+        if not ns:IsInCombat() and nearbyFrame:IsShown() then
+            nearbyFrame:Hide()
+        end
+        return
+    end
+
     self:UpdateStatusBar()
 
     if ns:IsInCombat() then
         return
     end
 
+    if db.panelCollapsed then
+        if not nearbyFrame:IsShown() then
+            nearbyFrame:Show()
+        end
+        return
+    end
+
     local playerMapID, px, py, mapWidth, mapHeight = ns:GetPlayerPosition()
-    local db = ns.db or ns.DEFAULTS
     local radius = db.nearbyRadius or 150
 
     local currentZoneName, sections = CollectZoneGroupedQuests(playerMapID, px, py, mapWidth, mapHeight, radius)
@@ -1414,7 +1695,8 @@ function Nearby:ScanOnce()
         hSlot:SetHeight(GROUP_HEADER_HEIGHT)
         hSlot:ClearAllPoints()
         hSlot:SetPoint("TOPLEFT", scrollChild, "TOPLEFT", 0, -yCursor)
-        hSlot.bg:SetColorTexture(sec.bgR, sec.bgG, sec.bgB, 0.62)
+        local alphaFactor = math.max(0.15, math.min(0.85, ((db.panelAlpha or 35) / 100) + 0.10))
+        hSlot.bg:SetColorTexture(sec.bgR, sec.bgG, sec.bgB, alphaFactor)
         hSlot.highlightTex:SetAlpha(0.25)
         hSlot.goBtn:Hide()
         hSlot.titleText:ClearAllPoints()
@@ -1439,6 +1721,7 @@ function Nearby:ScanOnce()
                 rSlot.questTitle = item.title
                 rSlot.zoneName = item.zoneName
                 rSlot.groupType = item.groupType
+                rSlot.isMain = item.isMain
                 rSlot.isComplete = item.isComplete
                 rSlot.hasLocation = item.hasLocation
                 rSlot.fallbackLoc = item.hasLocation and {
@@ -1458,10 +1741,11 @@ function Nearby:ScanOnce()
                 rSlot:SetPoint("TOPLEFT", scrollChild, "TOPLEFT", 0, -yCursor)
 
                 local isActiveTarget = (ns.activeQuestID == item.questID)
+                local rowAlpha = math.max(0.12, math.min(0.70, ((db.panelAlpha or 35) / 100) * 0.70))
                 if isActiveTarget then
-                    rSlot.bg:SetColorTexture(0.10, 0.30, 0.18, 0.58)
+                    rSlot.bg:SetColorTexture(0.10, 0.34, 0.20, math.min(0.75, rowAlpha + 0.25))
                 else
-                    rSlot.bg:SetColorTexture(0.03, 0.05, 0.09, 0.42)
+                    rSlot.bg:SetColorTexture(0.02, 0.04, 0.08, rowAlpha)
                 end
                 rSlot.highlightTex:SetAlpha(1)
 
@@ -1473,6 +1757,8 @@ function Nearby:ScanOnce()
                         rSlot.goBtn.icon:SetVertexColor(0.20, 1.0, 0.35, 1.0)
                     elseif item.groupType == "trainer" then
                         rSlot.goBtn.icon:SetVertexColor(0.95, 0.50, 1.0, 0.95)
+                    elseif item.isMain then
+                        rSlot.goBtn.icon:SetVertexColor(1.0, 0.58, 0.10, 1.0)
                     elseif item.groupType == "completed" then
                         rSlot.goBtn.icon:SetVertexColor(0.30, 1.0, 0.50, 0.95)
                     elseif item.groupType == "available" then
@@ -1489,8 +1775,11 @@ function Nearby:ScanOnce()
                 rSlot.titleText:SetPoint("LEFT", rSlot, "LEFT", 22, 0)
                 rSlot.titleText:SetPoint("RIGHT", rSlot, "RIGHT", -56, 0)
                 local statusPrefix = ""
+                if item.isMain then
+                    statusPrefix = "|cffff9e22[ANA]|r "
+                end
                 if item.levelTag then
-                    statusPrefix = item.levelTag .. " "
+                    statusPrefix = statusPrefix .. item.levelTag .. " "
                 end
                 if not item.isInCurrentZone and item.isComplete then
                     statusPrefix = statusPrefix .. "|cff33ff66[Teslim]|r "
@@ -1552,8 +1841,16 @@ statusEventFrame:RegisterEvent("PLAYER_LEVEL_UP")
 statusEventFrame:RegisterEvent("UPDATE_EXHAUSTION")
 statusEventFrame:RegisterEvent("SKILL_LINES_CHANGED")
 statusEventFrame:RegisterEvent("CHAT_MSG_SKILL")
-statusEventFrame:SetScript("OnEvent", function()
-    Nearby:UpdateStatusBar()
+statusEventFrame:SetScript("OnEvent", function(_, event, arg1)
+    if event == "PLAYER_LEVEL_UP" then
+        local newLevel = ns:IsSafeNumber(arg1) and arg1 or nil
+        pcall(Nearby.UpdateStatusBar, Nearby, newLevel)
+        ns:TrySafeC("C_Timer", "After", 0.3, function()
+            pcall(Nearby.UpdateStatusBar, Nearby)
+        end)
+    else
+        pcall(Nearby.UpdateStatusBar, Nearby)
+    end
 end)
 
 function Nearby:StartTicker()
@@ -1576,6 +1873,7 @@ end)
 
 ns:RegisterCallback("CONFIG_CHANGED", function()
     Nearby:UpdateLockState()
+    Nearby:ApplyAppearance()
     Nearby:ScanOnce()
 end)
 
@@ -1589,6 +1887,10 @@ end)
 
 ns:RegisterCallback("ZONE_CHANGED_NEW_AREA", function()
     lastRequestedQuestLineMap = nil
+    Nearby:ScanOnce()
+end)
+
+ns:RegisterCallback("QUESTLINE_UPDATE", function()
     Nearby:ScanOnce()
 end)
 

@@ -172,17 +172,17 @@ local function GetUnitQuestInfo(unit)
 end
 
 -- Nameplate kenari icin hafif, tiklanamaz gorev hedefi rozeti
+-- Taint onlemek icin Blizzard plate icine degil, UIParent uzerine olusturulur.
 local function GetOrCreateBadge(plate)
     local badge = nameplateBadges[plate]
     if badge then
         return badge
     end
 
-    badge = CreateFrame("Frame", nil, plate)
+    badge = CreateFrame("Frame", nil, UIParent)
     badge:SetSize(36, 30)
     badge:SetPoint("RIGHT", plate, "LEFT", -3, 0)
-    badge:SetFrameStrata("MEDIUM")
-    badge:SetFrameLevel((plate:GetFrameLevel() or 1) + 10)
+    badge:SetFrameStrata("LOW")
     badge:EnableMouse(false)
 
     -- Arka parlama halkasi (zarif ve kucuk)
@@ -459,9 +459,22 @@ end
 
 -- =====================================================================
 -- Envanterdeki (Cantalar) Gorev Esyalari Icin Turuncu Border Vurgusu
+-- Taint/ADDON_ACTION_BLOCKED onlemek icin Secure canta butonlarinin icine
+-- child eklenmez; UIParent tabanli ayri bir overlay uzerinde konumlandirilir.
 -- =====================================================================
+local bagOverlayRoot = nil
 local bagBorders = {}
 local bagHooksInstalled = false
+
+local function GetBagOverlayRoot()
+    if not bagOverlayRoot then
+        bagOverlayRoot = CreateFrame("Frame", "QuestGoToZBagOverlayRoot", UIParent)
+        bagOverlayRoot:SetAllPoints(UIParent)
+        bagOverlayRoot:SetFrameStrata("HIGH")
+        bagOverlayRoot:EnableMouse(false)
+    end
+    return bagOverlayRoot
+end
 
 local function GetOrCreateBagBorder(itemButton)
     local border = bagBorders[itemButton]
@@ -469,9 +482,9 @@ local function GetOrCreateBagBorder(itemButton)
         return border
     end
 
-    local f = CreateFrame("Frame", nil, itemButton)
+    local f = CreateFrame("Frame", nil, GetBagOverlayRoot())
     f:SetAllPoints(itemButton)
-    f:SetFrameLevel((itemButton:GetFrameLevel() or 1) + 6)
+    f:SetFrameStrata("HIGH")
     f:EnableMouse(false)
 
     local thickness = 2.5
@@ -512,38 +525,235 @@ local function GetOrCreateBagBorder(itemButton)
     return f
 end
 
+-- Yalnizca ustunde AKTIF gorevi bulunan gorev esyalarini tespit etmek icin onbellek
+local activeQuestIDs = {}
+local activeSpecialItemIDs = {}
+local activeObjectiveTexts = {}
+
+local function RebuildActiveQuestItemCache()
+    wipe(activeQuestIDs)
+    wipe(activeSpecialItemIDs)
+    wipe(activeObjectiveTexts)
+
+    local okNum, numEntries = ns:TrySafeC("C_QuestLog", "GetNumQuestLogEntries")
+    if not okNum or not ns:IsSafeNumber(numEntries) then
+        return
+    end
+
+    for idx = 1, numEntries do
+        local okInfo, info = ns:TrySafeC("C_QuestLog", "GetInfo", idx)
+        if okInfo and type(info) == "table" and not info.isHeader and not info.isHidden and ns:IsSafeNumber(info.questID) then
+            local qid = info.questID
+            activeQuestIDs[qid] = true
+
+            -- Goreve bagli kullanilabilir ozel gorev esyasi (GetQuestLogSpecialItemInfo)
+            local okSpec, link = ns:SafeGlobal("GetQuestLogSpecialItemInfo", idx)
+            if okSpec and ns:IsSafeString(link) then
+                local itemID = tonumber(link:match("item:(%d+)"))
+                if itemID then
+                    activeSpecialItemIDs[itemID] = true
+                end
+            end
+
+            -- Aktif gorev hedeflerindeki esya adlarini topla
+            local okObj, objectives = ns:TrySafeC("C_QuestLog", "GetQuestObjectives", qid)
+            if okObj and type(objectives) == "table" then
+                for j = 1, #objectives do
+                    local obj = objectives[j]
+                    if type(obj) == "table" and ns:IsSafeString(obj.text) and obj.text ~= "" then
+                        table.insert(activeObjectiveTexts, string.lower(obj.text))
+                    end
+                end
+            end
+        end
+    end
+end
+
+-- Yalnizca ustunde aktif olarak bulunan bir goreve ait esya ise true doner
 local function IsBagSlotQuestItem(bagID, slotID)
     if not ns:IsSafeNumber(bagID) or not ns:IsSafeNumber(slotID) then
         return false
     end
 
-    -- 1) C_Container.GetContainerItemQuestInfo (gorev esyasi veya gorev baslatan esya)
+    local okID, itemID = ns:TrySafeC("C_Container", "GetContainerItemID", bagID, slotID)
+    if not okID or not ns:IsSafeNumber(itemID) then
+        return false
+    end
+
+    -- 1) Ustundeki aktif gorevin ozel kullanilabilir esyasi mi?
+    if activeSpecialItemIDs[itemID] then
+        return true
+    end
+
+    -- 2) C_Container.GetContainerItemQuestInfo ile bagli questID ustunde aktif mi?
     local okQ, qInfo = ns:TrySafeC("C_Container", "GetContainerItemQuestInfo", bagID, slotID)
-    if okQ and type(qInfo) == "table" then
-        if qInfo.isQuestItem == true or (ns:IsSafeNumber(qInfo.questID) and qInfo.questID > 0) then
+    if okQ and type(qInfo) == "table" and ns:IsSafeNumber(qInfo.questID) and qInfo.questID > 0 then
+        if activeQuestIDs[qInfo.questID] then
             return true
         end
     end
 
-    -- 2) Item sinifi Quest (classID == 12) kontrolu
-    local okID, itemID = ns:TrySafeC("C_Container", "GetContainerItemID", bagID, slotID)
-    if okID and ns:IsSafeNumber(itemID) then
-        local okInst, _, _, _, _, _, classID = ns:TrySafeC("C_Item", "GetItemInfoInstant", itemID)
-        if not okInst then
-            okInst, _, _, _, _, _, classID = ns:SafeGlobal("GetItemInfoInstant", itemID)
+    -- 3) Esya adi ustundeki aktif gorevlerin hedeflerinden birinde geciyor mu?
+    if #activeObjectiveTexts > 0 then
+        local itemName = nil
+        local okN, fetched = ns:TrySafeC("C_Item", "GetItemNameByID", itemID)
+        if okN and ns:IsSafeString(fetched) and fetched ~= "" then
+            itemName = fetched
+        else
+            local okI, name2 = ns:SafeGlobal("GetItemInfo", itemID)
+            if okI and ns:IsSafeString(name2) and name2 ~= "" then
+                itemName = name2
+            end
         end
-        if okInst and ns:IsSafeNumber(classID) and classID == 12 then
-            return true
+        if itemName then
+            local lowerName = string.lower(itemName)
+            for i = 1, #activeObjectiveTexts do
+                if activeObjectiveTexts[i]:find(lowerName, 1, true) then
+                    return true
+                end
+            end
         end
     end
 
     return false
 end
 
+-- Cantadaki daha yuksek ilvl giyilebilir esyalar icin yesil yukari ok (UIParent overlay)
+local upgradeArrows = {}
+
+local EQUIP_LOC_SLOTS = {
+    INVTYPE_HEAD = { 1 },
+    INVTYPE_NECK = { 2 },
+    INVTYPE_SHOULDER = { 3 },
+    INVTYPE_CHEST = { 5 },
+    INVTYPE_ROBE = { 5 },
+    INVTYPE_WAIST = { 6 },
+    INVTYPE_LEGS = { 7 },
+    INVTYPE_FEET = { 8 },
+    INVTYPE_WRIST = { 9 },
+    INVTYPE_HAND = { 10 },
+    INVTYPE_FINGER = { 11, 12 },
+    INVTYPE_TRINKET = { 13, 14 },
+    INVTYPE_CLOAK = { 15 },
+    INVTYPE_WEAPON = { 16 },
+    INVTYPE_2HWEAPON = { 16 },
+    INVTYPE_WEAPONMAINHAND = { 16 },
+    INVTYPE_WEAPONOFFHAND = { 17 },
+    INVTYPE_HOLDABLE = { 17 },
+    INVTYPE_SHIELD = { 17 },
+    INVTYPE_RANGED = { 16 },
+    INVTYPE_RANGEDRIGHT = { 16 },
+}
+
+local function GetOrCreateUpgradeArrow(itemButton)
+    local arr = upgradeArrows[itemButton]
+    if arr then
+        return arr
+    end
+    local f = CreateFrame("Frame", nil, GetBagOverlayRoot())
+    f:SetSize(14, 14)
+    f:SetPoint("TOPRIGHT", itemButton, "TOPRIGHT", -1, -1)
+    f:SetFrameStrata("HIGH")
+    f:EnableMouse(false)
+
+    local tex = f:CreateTexture(nil, "OVERLAY", nil, 7)
+    tex:SetAllPoints()
+    tex:SetTexture("Interface\\Minimap\\MinimapArrow")
+    tex:SetDesaturated(true)
+    tex:SetVertexColor(0.20, 1.0, 0.35, 1.0)
+    f.tex = tex
+
+    f:Hide()
+    upgradeArrows[itemButton] = f
+    return f
+end
+
+local function GetSafeItemLevel(link)
+    if not ns:IsSafeString(link) then
+        return nil
+    end
+    local okD, ilvl = ns:TrySafeC("C_Item", "GetDetailedItemLevelInfo", link)
+    if okD and ns:IsSafeNumber(ilvl) and ilvl > 0 then
+        return ilvl
+    end
+    local okG, _, _, _, baseIlvl = ns:SafeGlobal("GetItemInfo", link)
+    if okG and ns:IsSafeNumber(baseIlvl) and baseIlvl > 0 then
+        return baseIlvl
+    end
+    return nil
+end
+
+local function IsBagSlotEquipmentUpgrade(bagID, slotID)
+    local db = ns.db or ns.DEFAULTS
+    if not db.showUpgradeArrows then
+        return false
+    end
+    if not ns:IsSafeNumber(bagID) or not ns:IsSafeNumber(slotID) then
+        return false
+    end
+
+    local okLink, link = ns:TrySafeC("C_Container", "GetContainerItemLink", bagID, slotID)
+    if not okLink or not ns:IsSafeString(link) then
+        return false
+    end
+
+    local okEq, isEq = ns:TrySafeC("C_Item", "IsEquippableItem", link)
+    if not okEq then
+        okEq, isEq = ns:SafeGlobal("IsEquippableItem", link)
+    end
+    if not (okEq and isEq == true) then
+        return false
+    end
+
+    local okInfo, _, _, _, _, minLevel, _, _, _, equipLoc, _, _, classID = ns:TrySafeC("C_Item", "GetItemInfo", link)
+    if not okInfo then
+        okInfo, _, _, _, _, minLevel, _, _, _, equipLoc, _, _, classID = ns:SafeGlobal("GetItemInfo", link)
+    end
+    if not okInfo or not ns:IsSafeString(equipLoc) then
+        return false
+    end
+    if classID ~= 2 and classID ~= 4 then -- Sadece Weapon (2) ve Armor (4)
+        return false
+    end
+
+    local slots = EQUIP_LOC_SLOTS[equipLoc]
+    if not slots then
+        return false
+    end
+
+    local okLvl, playerLvl = ns:SafeGlobal("UnitLevel", "player")
+    if okLvl and ns:IsSafeNumber(playerLvl) and ns:IsSafeNumber(minLevel) and minLevel > playerLvl then
+        return false
+    end
+
+    local bagIlvl = GetSafeItemLevel(link)
+    if not bagIlvl then
+        return false
+    end
+
+    -- Giyili slottaki en dusuk ilvl ile karsilastir
+    local lowestEquipped = math.huge
+    for i = 1, #slots do
+        local okEL, eqLink = ns:SafeGlobal("GetInventoryItemLink", "player", slots[i])
+        if okEL and ns:IsSafeString(eqLink) then
+            local eqIlvl = GetSafeItemLevel(eqLink) or 0
+            if eqIlvl < lowestEquipped then
+                lowestEquipped = eqIlvl
+            end
+        else
+            lowestEquipped = 0
+        end
+    end
+
+    return bagIlvl > lowestEquipped
+end
+
 local function UpdateBagButton(itemButton, explicitBagID)
     if type(itemButton) ~= "table" or not itemButton.IsShown or not itemButton:IsShown() then
         local b = bagBorders[itemButton]
         if b then b:Hide() end
+        local a = upgradeArrows[itemButton]
+        if a then a:Hide() end
         return
     end
 
@@ -572,6 +782,16 @@ local function UpdateBagButton(itemButton, explicitBagID)
             border:Hide()
         end
     end
+
+    if IsBagSlotEquipmentUpgrade(bagID, slotID) then
+        local arr = GetOrCreateUpgradeArrow(itemButton)
+        arr:Show()
+    else
+        local arr = upgradeArrows[itemButton]
+        if arr then
+            arr:Hide()
+        end
+    end
 end
 
 local function ScanContainerFrame(frame)
@@ -597,7 +817,26 @@ local function ScanContainerFrame(frame)
     end
 end
 
+local function HideAllBagBorders()
+    for _, border in pairs(bagBorders) do
+        border:Hide()
+    end
+    for _, arr in pairs(upgradeArrows) do
+        arr:Hide()
+    end
+end
+
 function QuestMobs:RefreshBagHighlights()
+    if ns:IsInCombat() then
+        ns:RunOutOfCombat("refresh_bag_highlights", function()
+            QuestMobs:RefreshBagHighlights()
+        end)
+        return
+    end
+
+    HideAllBagBorders()
+    RebuildActiveQuestItemCache()
+
     if type(_G.ContainerFrameCombinedBags) == "table" then
         pcall(ScanContainerFrame, _G.ContainerFrameCombinedBags)
     end
@@ -620,21 +859,33 @@ local function InstallBagHooks()
     end
     bagHooksInstalled = true
 
-    if type(_G.ContainerFrameCombinedBags) == "table" and type(_G.ContainerFrameCombinedBags.UpdateItems) == "function" then
-        hooksecurefunc(_G.ContainerFrameCombinedBags, "UpdateItems", function()
-            QuestMobs:RefreshBagHighlights()
-        end)
+    if type(_G.ContainerFrameCombinedBags) == "table" then
+        if type(_G.ContainerFrameCombinedBags.UpdateItems) == "function" then
+            hooksecurefunc(_G.ContainerFrameCombinedBags, "UpdateItems", function()
+                QuestMobs:RefreshBagHighlights()
+            end)
+        end
+        if type(_G.ContainerFrameCombinedBags.HookScript) == "function" then
+            _G.ContainerFrameCombinedBags:HookScript("OnHide", function()
+                HideAllBagBorders()
+            end)
+        end
     end
     if type(_G.ContainerFrame_Update) == "function" then
-        hooksecurefunc("ContainerFrame_Update", function(frame)
-            pcall(ScanContainerFrame, frame)
+        hooksecurefunc("ContainerFrame_Update", function()
+            QuestMobs:RefreshBagHighlights()
         end)
     end
     if type(_G.ContainerFrameContainer) == "table" and type(_G.ContainerFrameContainer.ContainerFrames) == "table" then
         for _, cf in ipairs(_G.ContainerFrameContainer.ContainerFrames) do
             if type(cf.UpdateItems) == "function" then
-                hooksecurefunc(cf, "UpdateItems", function(selfFrame)
-                    pcall(ScanContainerFrame, selfFrame)
+                hooksecurefunc(cf, "UpdateItems", function()
+                    QuestMobs:RefreshBagHighlights()
+                end)
+            end
+            if type(cf.HookScript) == "function" then
+                cf:HookScript("OnHide", function()
+                    QuestMobs:RefreshBagHighlights()
                 end)
             end
         end

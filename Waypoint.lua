@@ -126,7 +126,9 @@ end
 
 -- Aktif UserWaypoint'i temizler
 function ns:ClearQuestWaypoint(silent)
-    self:SafeC("C_Map", "ClearUserWaypoint")
+    ns:RunOutOfCombat("clear_waypoint", function()
+        ns:SafeC("C_Map", "ClearUserWaypoint")
+    end)
     self.activeQuestID = nil
     self.activeTarget = nil
     if not silent then
@@ -203,29 +205,33 @@ function ns:SetQuestWaypointWithLoc(loc, silent)
         return false
     end
 
-    -- Aktif gorev ise Blizzard'in kendi gorev supertrack'ini de ac
-    if not loc.isAvailable and not loc.isTrainer and not loc.isCorpse and self:IsSafeNumber(loc.questID) and loc.questID > 0 then
-        self:TrySafeC("C_SuperTrack", "SetSuperTrackedQuestID", loc.questID)
-    end
+    -- Waypoint ve SuperTrack cagrilari savas disinda guvenle uygulanir
+    local targetLoc = loc
+    ns:RunOutOfCombat("set_waypoint", function()
+        if not targetLoc.isAvailable and not targetLoc.isTrainer and not targetLoc.isCorpse
+            and ns:IsSafeNumber(targetLoc.questID) and targetLoc.questID > 0 then
+            ns:TrySafeC("C_SuperTrack", "SetSuperTrackedQuestID", targetLoc.questID)
+        end
 
-    local okCan, canSet = self:SafeC("C_Map", "CanSetUserWaypointOnMap", loc.mapID)
-    if okCan and canSet then
-        if type(_G.UiMapPoint) == "table" and type(_G.UiMapPoint.CreateFromCoordinates) == "function" then
-            local okPt, mapPoint = pcall(_G.UiMapPoint.CreateFromCoordinates, loc.mapID, loc.x, loc.y)
-            if okPt and mapPoint then
-                local okSet = self:SafeC("C_Map", "SetUserWaypoint", mapPoint)
-                if okSet then
-                    self:SafeC("C_SuperTrack", "SetSuperTrackedUserWaypoint", true)
+        local okCan, canSet = ns:SafeC("C_Map", "CanSetUserWaypointOnMap", targetLoc.mapID)
+        if okCan and canSet then
+            if type(_G.UiMapPoint) == "table" and type(_G.UiMapPoint.CreateFromCoordinates) == "function" then
+                local okPt, mapPoint = pcall(_G.UiMapPoint.CreateFromCoordinates, targetLoc.mapID, targetLoc.x, targetLoc.y)
+                if okPt and mapPoint then
+                    local okSet = ns:SafeC("C_Map", "SetUserWaypoint", mapPoint)
+                    if okSet then
+                        ns:SafeC("C_SuperTrack", "SetSuperTrackedUserWaypoint", true)
+                    end
+                else
+                    ns:PrintError("uimap_point", "UiMapPoint.CreateFromCoordinates hatasi: " .. tostring(mapPoint))
                 end
             else
-                self:PrintError("uimap_point", "UiMapPoint.CreateFromCoordinates hatasi: " .. tostring(mapPoint))
+                ns:PrintError("uimap_missing", "UiMapPoint.CreateFromCoordinates bulunamadi.")
             end
-        else
-            self:PrintError("uimap_missing", "UiMapPoint.CreateFromCoordinates bulunamadi.")
+        elseif not silent then
+            ns:Print("Bu haritada oyun ici waypoint koyulamiyor; yalnizca mesafe oku ve minimap cizgisi gosterilecek.")
         end
-    elseif not silent then
-        self:Print("Bu haritada oyun ici waypoint koyulamiyor; yalnizca mesafe oku ve minimap cizgisi gosterilecek.")
-    end
+    end)
 
     self.activeQuestID = loc.questID
     self.activeTarget = loc
@@ -289,9 +295,11 @@ function ns:SelectNearestQuest(excludeQuestID)
 end
 
 -- Objective Tracker bloklari icin 16x16 "Git" butonu olusturma
-local function CreateTrackerButton(block)
-    local btn = CreateFrame("Button", nil, block)
+-- Taint onlemek icin Blizzard block icine degil, UIParent uzerine olusturulur.
+local function CreateTrackerButton()
+    local btn = CreateFrame("Button", nil, UIParent)
     btn:SetSize(16, 16)
+    btn:SetFrameStrata("MEDIUM")
     btn:SetMotionScriptsWhileDisabled(true)
 
     local icon = btn:CreateTexture(nil, "ARTWORK")
@@ -353,7 +361,7 @@ local function UpdateBlockButton(block)
 
     local btn = blockButtons[block]
     if not btn then
-        btn = CreateTrackerButton(block)
+        btn = CreateTrackerButton()
         blockButtons[block] = btn
     end
 
@@ -627,6 +635,11 @@ local function GetOrCreateWorldMapPin(index)
         local d = selfPin.pinData
         GameTooltip:SetOwner(selfPin, "ANCHOR_RIGHT")
         GameTooltip:SetText(d.title or ("Gorev #" .. tostring(d.questID)), 1, 0.85, 0.2)
+        if d.isMain then
+            GameTooltip:AddLine("Ana Gorev (Hikaye)", 1.0, 0.62, 0.14)
+        else
+            GameTooltip:AddLine("Yan Gorev", 0.78, 0.82, 0.90)
+        end
         if d.pinType == "completed" then
             GameTooltip:AddLine("Tamamlandi (Teslim NPC'si)", 0.25, 1.0, 0.40)
         elseif d.pinType == "available" then
@@ -672,6 +685,12 @@ local function GetOrCreateWorldMapPin(index)
 end
 
 function Waypoint:RefreshWorldMapCompletedCircles()
+    if ns:IsInCombat() then
+        ns:RunOutOfCombat("refresh_worldmap_pins", function()
+            Waypoint:RefreshWorldMapCompletedCircles()
+        end)
+        return
+    end
     if not WorldMapFrame or not WorldMapFrame:IsShown() then
         return
     end
@@ -732,6 +751,7 @@ function Waypoint:RefreshWorldMapCompletedCircles()
             y = y,
             pinType = pinType,
             title = title,
+            isMain = ns:IsMainQuest(questID, nil, mapID),
         })
     end
 
@@ -812,22 +832,30 @@ function Waypoint:RefreshWorldMapCompletedCircles()
             pin.ring2:Show()
             pin.icon:Hide()
         elseif pt.pinType == "available" then
-            -- Alinabilir gorev: parlak ! ikonu
+            -- Alinabilir gorev: parlak ! ikonu (Ana gorevde turuncu halka)
             pin:SetSize(20, 20)
             pin.fill:Hide()
             pin.ring:SetSize(22, 22)
-            pin.ring:SetVertexColor(1.0, 0.82, 0.15, 0.65)
+            if pt.isMain then
+                pin.ring:SetVertexColor(1.0, 0.50, 0.08, 0.95)
+            else
+                pin.ring:SetVertexColor(1.0, 0.82, 0.15, 0.65)
+            end
             pin.ring:Show()
             pin.ring2:Hide()
             pin.icon:SetSize(16, 16)
             pin.icon:SetTexture("Interface\\GossipFrame\\AvailableQuestIcon")
             pin.icon:Show()
         else
-            -- Devam eden gorev: kilic veya el ikonu
+            -- Devam eden gorev: kilic veya el ikonu (Ana gorevde turuncu halka)
             pin:SetSize(20, 20)
             pin.fill:Hide()
             pin.ring:SetSize(22, 22)
-            pin.ring:SetVertexColor(1.0, 0.78, 0.18, 0.55)
+            if pt.isMain then
+                pin.ring:SetVertexColor(1.0, 0.50, 0.08, 0.95)
+            else
+                pin.ring:SetVertexColor(1.0, 0.78, 0.18, 0.55)
+            end
             pin.ring:Show()
             pin.ring2:Hide()
             pin.icon:SetSize(14, 14)

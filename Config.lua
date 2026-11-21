@@ -169,15 +169,21 @@ local function CreateConfigFrame()
         selfFrame:StopMovingOrSizing()
     end)
 
+    -- Modern 1 px ince kenarlikli transparan cam ayar penceresi
     f:SetBackdrop({
-        bgFile = "Interface\\DialogFrame\\UI-DialogBox-Background-Dark",
-        edgeFile = "Interface\\DialogFrame\\UI-DialogBox-Border",
-        tile = true,
-        tileSize = 32,
-        edgeSize = 24,
-        insets = { left = 6, right = 6, top = 6, bottom = 6 },
+        bgFile = "Interface\\Buttons\\WHITE8X8",
+        edgeFile = "Interface\\Buttons\\WHITE8X8",
+        edgeSize = 1,
+        insets = { left = 1, right = 1, top = 1, bottom = 1 },
     })
-    f:SetBackdropColor(0.05, 0.07, 0.11, 0.94)
+    f:SetBackdropColor(0.03, 0.05, 0.09, 0.80)
+    f:SetBackdropBorderColor(1.0, 1.0, 1.0, 0.22)
+
+    local topSep = f:CreateTexture(nil, "ARTWORK")
+    topSep:SetHeight(1)
+    topSep:SetPoint("TOPLEFT", f, "TOPLEFT", 12, -32)
+    topSep:SetPoint("TOPRIGHT", f, "TOPRIGHT", -12, -32)
+    topSep:SetColorTexture(1.0, 1.0, 1.0, 0.12)
 
     local title = f:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
     title:SetPoint("TOP", f, "TOP", 0, -14)
@@ -366,6 +372,16 @@ local function CreateConfigFrame()
         function() return ns.db.locked end,
         function(v) ns.db.locked = v end
     ))
+    table.insert(f.controls, CreateCheckbox(tab1Panel, "Gorev listesini goster", 235, -260,
+        function() return ns.db.showQuestList ~= false end,
+        function(v) ns.db.showQuestList = v end
+    ))
+    table.insert(f.controls, CreateSlider(
+        tab1Panel, "QuestGoToZAlphaSlider", "Opaklik",
+        10, 95, 5, 226, -310, 152, "%",
+        function() return ns.db.panelAlpha or 35 end,
+        function(v) ns.db.panelAlpha = v end
+    ))
 
     -- =================================================================
     -- SEKME 2: Ozellikler & Puanlama Agirliklari
@@ -424,6 +440,26 @@ local function CreateConfigFrame()
     table.insert(f.controls, CreateCheckbox(tab2Panel, "Parti ilerleme senkronu", 215, -84,
         function() return ns.db.partySync end,
         function(v) ns.db.partySync = v end
+    ))
+    table.insert(f.controls, CreateCheckbox(tab2Panel, "Levelling ile devam (al + yap)", 215, -110,
+        function() return ns.db.levelingMode end,
+        function(v) ns.db.levelingMode = v end
+    ))
+    table.insert(f.controls, CreateCheckbox(tab2Panel, "Ust-orta aktif gorev karti", 215, -136,
+        function() return ns.db.showBanner end,
+        function(v) ns.db.showBanner = v end
+    ))
+    table.insert(f.controls, CreateCheckbox(tab2Panel, "Cantada daha iyi esya oku", 215, -162,
+        function() return ns.db.showUpgradeArrows end,
+        function(v) ns.db.showUpgradeArrows = v end
+    ))
+    table.insert(f.controls, CreateCheckbox(tab2Panel, "Dayaniklilik (<%30) uyarisi", 215, -188,
+        function() return ns.db.durabilityAlert end,
+        function(v) ns.db.durabilityAlert = v end
+    ))
+    table.insert(f.controls, CreateCheckbox(tab2Panel, "Level up kontrol ozeti", 215, -214,
+        function() return ns.db.levelUpChecklist end,
+        function(v) ns.db.levelUpChecklist = v end
     ))
 
     local wHeader = tab2Panel:CreateFontString(nil, "OVERLAY", "GameFontNormal")
@@ -487,9 +523,16 @@ local function CreateConfigFrame()
             x = ns.DEFAULTS.questItemPos.x,
             y = ns.DEFAULTS.questItemPos.y,
         }
+        ns.db.bannerPos = {
+            point = ns.DEFAULTS.bannerPos.point,
+            relativePoint = ns.DEFAULTS.bannerPos.relativePoint,
+            x = ns.DEFAULTS.bannerPos.x,
+            y = ns.DEFAULTS.bannerPos.y,
+        }
         if ns.Arrow then ns.Arrow:ApplyPosition() end
         if ns.Nearby then ns.Nearby:ApplyPosition() end
         if ns.Comfort then ns.Comfort:ApplyQuestItemPosition() end
+        if ns.SmartQuest then ns.SmartQuest:ApplyBannerPosition() end
         ns:Print("Cerceve konumlari ve boyutlari sifirlandi.")
     end)
 
@@ -554,6 +597,18 @@ SlashCmdList["QUESTGOTOZ"] = function(msg)
     elseif cmd == "testdmg" or cmd == "test" then
         if ns.CombatText then
             ns.CombatText:RunTest()
+        end
+    elseif cmd == "list" or cmd == "liste" or cmd == "ac" or cmd == "kapat" or cmd == "toggle" then
+        if ns.Nearby then
+            ns.Nearby:ToggleVisibility()
+        end
+    elseif cmd == "level" or cmd == "levelling" or cmd == "leveling" then
+        ns.db.levelingMode = not ns.db.levelingMode
+        ns:FireCallback("CONFIG_CHANGED")
+        ns:Print("Levelling gorevleri ile devam: " .. (ns.db.levelingMode and "ACIK" or "KAPALI"))
+    elseif cmd == "kart" or cmd == "banner" then
+        if ns.SmartQuest then
+            ns.SmartQuest:ToggleBanner()
         end
     else
         Config:Toggle()

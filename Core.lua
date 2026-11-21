@@ -1,7 +1,7 @@
 local addonName, ns = ...
 
 ns.name = addonName
-ns.version = "1.1.0"
+ns.version = "1.2.0"
 
 -- Varsayilan SavedVariables profil ayarlari
 ns.DEFAULTS = {
@@ -29,6 +29,14 @@ ns.DEFAULTS = {
     showWorldMapPins = true,     -- Dunya haritasinda (M) gorev pinleri ve yesil daireler
     showQuestLevel = true,       -- Gorev listesinde renkli [Lv] etiketi
     partySync = true,            -- Parti arkadaslariyla canli gorev ilerlemesi senkronu
+    levelingMode = true,         -- Levelling gorevleri ile devam (alinmamis yuksek XP + mevcut)
+    showBanner = true,           -- Ust-orta AAP tarzi aktif gorev karti
+    showUpgradeArrows = true,    -- Cantada daha yuksek ilvl esya icin yesil yukari ok
+    durabilityAlert = true,      -- Zirh dayanikliligi <%30 olunca tamirci uyarisi
+    levelUpChecklist = true,     -- Level atlayinca tek satirlik talent/binek/egitmen kontrolu
+    showQuestList = true,        -- Gorev penceresini goster/gizle
+    panelCollapsed = false,      -- Gorev penceresi daraltilmis mi (ac/kapa)
+    panelAlpha = 35,             -- Gorev penceresi arka plan opakligi (%10 - %95, dusuk = daha transparan)
     locked = false,              -- Cerceveleri kilitle
     weights = {
         distance = 40,           -- Yakinlik agirligi
@@ -62,6 +70,12 @@ ns.DEFAULTS = {
         relativePoint = "BOTTOM",
         x = 0,
         y = 170,
+    },
+    bannerPos = {
+        point = "TOP",
+        relativePoint = "TOP",
+        x = 0,
+        y = -68,
     },
     layoutVersion = 3,
 }
@@ -428,6 +442,45 @@ function ns:GetMapName(mapID)
     return nil
 end
 
+-- Bir gorevin Ana Gorev (Campaign / Main Story / Important) mi yoksa Yan Gorev mi oldugunu dondurur
+function ns:IsMainQuest(questID, questInfo, mapID)
+    if not self:IsSafeNumber(questID) or questID <= 0 then
+        return false
+    end
+
+    -- 1) C_QuestLog.GetInfo icindeki dogrudan alanlar
+    if type(questInfo) == "table" then
+        if self:IsSafeNumber(questInfo.campaignID) and questInfo.campaignID > 0 then
+            return true
+        end
+        if questInfo.isStory == true then
+            return true
+        end
+    end
+
+    -- 2) C_CampaignInfo.GetCampaignID(questID)
+    local okCamp, campID = self:TrySafeC("C_CampaignInfo", "GetCampaignID", questID)
+    if okCamp and self:IsSafeNumber(campID) and campID > 0 then
+        return true
+    end
+
+    -- 3) C_QuestLog.IsImportantQuest(questID)
+    local okImp, isImp = self:TrySafeC("C_QuestLog", "IsImportantQuest", questID)
+    if okImp and isImp == true then
+        return true
+    end
+
+    -- 4) C_QuestLine.GetQuestLineInfo(questID, mapID)
+    if self:IsSafeNumber(mapID) then
+        local okQL, qlInfo = self:TrySafeC("C_QuestLine", "GetQuestLineInfo", questID, mapID)
+        if okQL and type(qlInfo) == "table" and (qlInfo.isCampaign == true or qlInfo.isImportant == true) then
+            return true
+        end
+    end
+
+    return false
+end
+
 local YARD_TO_METER = 0.9144
 
 -- Iki harita koordinati arasindaki metre mesafesini ve hedef acisini (radyan, Kuzey=0, CCW) hesaplar
@@ -488,6 +541,9 @@ eventFrame:RegisterEvent("PLAYER_UNGHOST")
 eventFrame:RegisterEvent("PLAYER_ALIVE")
 eventFrame:RegisterEvent("QUEST_COMPLETE")
 eventFrame:RegisterEvent("BAG_UPDATE_DELAYED")
+eventFrame:RegisterEvent("UPDATE_INVENTORY_DURABILITY")
+eventFrame:RegisterEvent("PLAYER_LEVEL_UP")
+pcall(eventFrame.RegisterEvent, eventFrame, "QUESTLINE_UPDATE")
 
 eventFrame:SetScript("OnEvent", function(_, event, ...)
     if event == "ADDON_LOADED" then

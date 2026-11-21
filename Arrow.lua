@@ -5,6 +5,7 @@ ns.Arrow = Arrow
 
 local arrowFrame = nil
 local minimapOverlay = nil
+local worldMapGuide = nil
 local updateTicker = nil
 
 -- C_Minimap.GetViewRadius yoksa kullanilacak yedek yaricaplar (yarda)
@@ -189,6 +190,156 @@ local function UpdateMinimapGuide(dxYards, dyYards, facing, isCrossMap)
     minimapOverlay.targetDot:Show()
 end
 
+-- =====================================================================
+-- Dunya Haritasi (M) Uzerinde Yesil / Mavi Yon Cizgisi
+-- =====================================================================
+local function HideWorldMapGuide()
+    if not worldMapGuide then
+        return
+    end
+    worldMapGuide.shadowLine:Hide()
+    worldMapGuide.guideLine:Hide()
+    worldMapGuide.targetRing:Hide()
+    worldMapGuide.targetDot:Hide()
+end
+
+local function EnsureWorldMapGuide(canvas)
+    if not canvas then
+        return nil
+    end
+    if not worldMapGuide then
+        if ns:IsInCombat() then
+            return nil
+        end
+        local f = CreateFrame("Frame", "QuestGoToZWorldMapGuideLine", canvas)
+        f:SetAllPoints(canvas)
+        f:SetFrameLevel((canvas:GetFrameLevel() or 1) + 24)
+        f:EnableMouse(false)
+
+        local shadowLine = f:CreateLine(nil, "OVERLAY", nil, 1)
+        shadowLine:SetThickness(5.5)
+        shadowLine:SetColorTexture(0.0, 0.0, 0.0, 0.50)
+        shadowLine:Hide()
+        f.shadowLine = shadowLine
+
+        local guideLine = f:CreateLine(nil, "OVERLAY", nil, 2)
+        guideLine:SetThickness(3.0)
+        guideLine:SetColorTexture(0.20, 1.0, 0.48, 0.94)
+        guideLine:Hide()
+        f.guideLine = guideLine
+
+        local targetRing = f:CreateTexture(nil, "OVERLAY", nil, 3)
+        targetRing:SetSize(22, 22)
+        targetRing:SetTexture("Interface\\Minimap\\UI-Minimap-ZoomButton-Highlight")
+        targetRing:SetBlendMode("ADD")
+        targetRing:Hide()
+        f.targetRing = targetRing
+
+        local targetDot = f:CreateTexture(nil, "OVERLAY", nil, 4)
+        targetDot:SetSize(7, 7)
+        targetDot:Hide()
+        f.targetDot = targetDot
+
+        worldMapGuide = f
+    elseif worldMapGuide:GetParent() ~= canvas and not ns:IsInCombat() then
+        worldMapGuide:SetParent(canvas)
+        worldMapGuide:SetAllPoints(canvas)
+        worldMapGuide:SetFrameLevel((canvas:GetFrameLevel() or 1) + 24)
+    end
+    return worldMapGuide
+end
+
+local function UpdateWorldMapGuide(playerMapID, px, py, tx, ty, mapWidth, mapHeight, dxYards, dyYards, targetOnPlayerMap, isCrossMap)
+    if not WorldMapFrame or not WorldMapFrame:IsShown() then
+        HideWorldMapGuide()
+        return
+    end
+    if type(WorldMapFrame.GetCanvas) ~= "function" or type(WorldMapFrame.GetMapID) ~= "function" then
+        HideWorldMapGuide()
+        return
+    end
+
+    local viewMapID = WorldMapFrame:GetMapID()
+    if not ns:IsSafeNumber(viewMapID) or viewMapID ~= playerMapID then
+        HideWorldMapGuide()
+        return
+    end
+
+    local canvas = WorldMapFrame:GetCanvas()
+    local cw = canvas and canvas:GetWidth() or 0
+    local ch = canvas and canvas:GetHeight() or 0
+    if not canvas or cw <= 0 or ch <= 0 then
+        HideWorldMapGuide()
+        return
+    end
+
+    local g = EnsureWorldMapGuide(canvas)
+    if not g then
+        return
+    end
+
+    local endX, endY = tx, ty
+    if not targetOnPlayerMap then
+        -- Hedef baska haritada ve cikis noktasi yoksa, kita yonunu mevcut harita kenarina yansit
+        if mapWidth and mapHeight and mapWidth > 0 and mapHeight > 0 then
+            local rawX = px + (dxYards / mapWidth)
+            local rawY = py - (dyYards / mapHeight)
+            -- [0.02, 0.98] sinirlarina dogru boyunca kelepcele
+            local vx = rawX - px
+            local vy = rawY - py
+            local tMax = 1.0
+            if vx > 0 and (px + vx) > 0.98 then tMax = math.min(tMax, (0.98 - px) / vx) end
+            if vx < 0 and (px + vx) < 0.02 then tMax = math.min(tMax, (0.02 - px) / vx) end
+            if vy > 0 and (py + vy) > 0.98 then tMax = math.min(tMax, (0.98 - py) / vy) end
+            if vy < 0 and (py + vy) < 0.02 then tMax = math.min(tMax, (0.02 - py) / vy) end
+            endX = px + vx * tMax
+            endY = py + vy * tMax
+        else
+            HideWorldMapGuide()
+            return
+        end
+    end
+
+    if not ns:IsSafeNumber(endX) or not ns:IsSafeNumber(endY) then
+        HideWorldMapGuide()
+        return
+    end
+
+    local sx, sy = px * cw, -py * ch
+    local ex, ey = endX * cw, -endY * ch
+    local pixDist = math.sqrt((ex - sx) * (ex - sx) + (ey - sy) * (ey - sy))
+    if pixDist < 5 then
+        HideWorldMapGuide()
+        return
+    end
+
+    if isCrossMap then
+        g.guideLine:SetColorTexture(0.22, 0.66, 1.0, 0.95)
+        g.targetRing:SetVertexColor(0.25, 0.72, 1.0, 0.95)
+        g.targetDot:SetColorTexture(0.35, 0.78, 1.0, 1.0)
+    else
+        g.guideLine:SetColorTexture(0.20, 1.0, 0.48, 0.94)
+        g.targetRing:SetVertexColor(0.25, 1.0, 0.55, 0.95)
+        g.targetDot:SetColorTexture(0.30, 1.0, 0.55, 1.0)
+    end
+
+    g.shadowLine:SetStartPoint("TOPLEFT", canvas, sx, sy)
+    g.shadowLine:SetEndPoint("TOPLEFT", canvas, ex, ey)
+    g.shadowLine:Show()
+
+    g.guideLine:SetStartPoint("TOPLEFT", canvas, sx, sy)
+    g.guideLine:SetEndPoint("TOPLEFT", canvas, ex, ey)
+    g.guideLine:Show()
+
+    g.targetRing:ClearAllPoints()
+    g.targetRing:SetPoint("CENTER", canvas, "TOPLEFT", ex, ey)
+    g.targetRing:Show()
+
+    g.targetDot:ClearAllPoints()
+    g.targetDot:SetPoint("CENTER", canvas, "TOPLEFT", ex, ey)
+    g.targetDot:Show()
+end
+
 -- Karakterin altinda sade, kutusuz, 3D derinlikli yon oku olusturur
 local function CreateArrowFrame()
     if arrowFrame then
@@ -357,6 +508,7 @@ end
 
 local function HideAllGuidesSafely()
     HideMinimapGuide()
+    HideWorldMapGuide()
     if arrowFrame and arrowFrame:IsShown() and not ns:IsInCombat() then
         arrowFrame:Hide()
     end
@@ -389,6 +541,7 @@ function Arrow:UpdateOnce()
 
     local dxYards, dyYards, dist, targetAngle
     local tx, ty = target.x, target.y
+    local targetOnPlayerMap = (target.mapID == playerMapID)
     local isCrossMap = (target.isCrossMap == true)
         or (ns:IsSafeNumber(target.finalMapID) and target.finalMapID ~= playerMapID)
         or (ns:IsSafeNumber(target.mapID) and target.mapID ~= playerMapID)
@@ -401,6 +554,7 @@ function Arrow:UpdateOnce()
             if okExit and ns:IsSafeNumber(ex) and ns:IsSafeNumber(ey) and (ex > 0 or ey > 0) then
                 tx, ty = ex, ey
                 isCrossMap = true
+                targetOnPlayerMap = true
                 resolvedSameMap = true
             else
                 local refreshed = ns:GetQuestLocation(target.questID)
@@ -409,6 +563,7 @@ function Arrow:UpdateOnce()
                     ns.activeTarget = refreshed
                     tx, ty = refreshed.x, refreshed.y
                     isCrossMap = (refreshed.isCrossMap == true)
+                    targetOnPlayerMap = true
                     resolvedSameMap = true
                 end
             end
@@ -428,6 +583,7 @@ function Arrow:UpdateOnce()
                     dist = math.sqrt(dxYards * dxYards + dyYards * dyYards) * 0.9144
                     targetAngle = math.atan2(-dxYards, dyYards)
                     isCrossMap = true
+                    targetOnPlayerMap = false
                 end
             end
             if not dist or not targetAngle then
@@ -447,8 +603,9 @@ function Arrow:UpdateOnce()
         dyYards = (py - ty) * mapHeight
     end
 
-    -- Minimap uzerinde hedefe yon cizgisini guncelle (ayni haritada YESIL, baska haritada MAVI)
+    -- Minimap ve Dunya Haritasi (M) uzerinde hedefe yon cizgisini guncelle (ayni haritada YESIL, baska haritada MAVI)
     UpdateMinimapGuide(dxYards, dyYards, facing, isCrossMap)
+    UpdateWorldMapGuide(playerMapID, px, py, tx, ty, mapWidth, mapHeight, dxYards, dyYards, targetOnPlayerMap, isCrossMap)
 
     -- Okun gorunurlugunu yalnizca combat disinda ac
     if not arrowFrame:IsShown() then

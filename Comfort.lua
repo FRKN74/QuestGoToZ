@@ -68,6 +68,9 @@ local function GetOrCreateRewardGoldIcon(btn)
 end
 
 function Comfort:HighlightBestSellReward()
+    if ns:IsInCombat() then
+        return
+    end
     -- Once mevcut ikonlari gizle
     for _, ic in pairs(rewardGoldIcons) do
         ic:Hide()
@@ -491,15 +494,13 @@ local function CreateQuestItemButton()
     btn:RegisterForClicks("AnyUp")
     btn:RegisterForDrag("RightButton")
     btn:SetBackdrop({
-        bgFile = "Interface\\DialogFrame\\UI-DialogBox-Background-Dark",
-        edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
-        tile = true,
-        tileSize = 16,
-        edgeSize = 10,
-        insets = { left = 3, right = 3, top = 3, bottom = 3 },
+        bgFile = "Interface\\Buttons\\WHITE8X8",
+        edgeFile = "Interface\\Buttons\\WHITE8X8",
+        edgeSize = 1,
+        insets = { left = 1, right = 1, top = 1, bottom = 1 },
     })
-    btn:SetBackdropColor(0.05, 0.08, 0.12, 0.75)
-    btn:SetBackdropBorderColor(1.0, 0.65, 0.15, 0.90)
+    btn:SetBackdropColor(0.03, 0.05, 0.09, 0.50)
+    btn:SetBackdropBorderColor(1.0, 0.72, 0.20, 0.75)
 
     btn:SetScript("OnDragStart", function(selfBtn)
         if ns:IsInCombat() or (ns.db and ns.db.locked) then
@@ -508,6 +509,9 @@ local function CreateQuestItemButton()
         selfBtn:StartMoving()
     end)
     btn:SetScript("OnDragStop", function(selfBtn)
+        if ns:IsInCombat() then
+            return
+        end
         selfBtn:StopMovingOrSizing()
         SaveQuestItemPos(selfBtn)
     end)
@@ -619,6 +623,176 @@ ns:RegisterCallback("PLAYER_LOGIN", function()
     end
 end)
 
+-- =====================================================================
+-- 7) Seviyene Gore Bolge Gecis Onerisi
+-- =====================================================================
+local LEVELING_ZONES = {
+    Alliance = {
+        { minLv = 1,  maxLv = 10, mapID = 37,  name = "Elwynn Forest",        x = 0.436, y = 0.658 },
+        { minLv = 10, maxLv = 18, mapID = 52,  name = "Westfall",             x = 0.565, y = 0.526 },
+        { minLv = 15, maxLv = 22, mapID = 49,  name = "Redridge Mountains",   x = 0.306, y = 0.594 },
+        { minLv = 20, maxLv = 28, mapID = 47,  name = "Duskwood",             x = 0.740, y = 0.453 },
+        { minLv = 22, maxLv = 30, mapID = 56,  name = "Wetlands",             x = 0.108, y = 0.596 },
+        { minLv = 25, maxLv = 35, mapID = 50,  name = "Northern Stranglethorn", x = 0.478, y = 0.106 },
+        { minLv = 35, maxLv = 42, mapID = 22,  name = "Western Plaguelands",  x = 0.394, y = 0.668 },
+        { minLv = 40, maxLv = 50, mapID = 71,  name = "Tanaris",              x = 0.514, y = 0.294 },
+        { minLv = 48, maxLv = 55, mapID = 78,  name = "Un'Goro Crater",       x = 0.552, y = 0.626 },
+        { minLv = 54, maxLv = 60, mapID = 17,  name = "Blasted Lands",        x = 0.638, y = 0.174 },
+    },
+    Horde = {
+        { minLv = 1,  maxLv = 10, mapID = 1,   name = "Durotar",              x = 0.516, y = 0.415 },
+        { minLv = 10, maxLv = 20, mapID = 10,  name = "Northern Barrens",     x = 0.515, y = 0.303 },
+        { minLv = 18, maxLv = 25, mapID = 63,  name = "Ashenvale",            x = 0.732, y = 0.616 },
+        { minLv = 20, maxLv = 28, mapID = 25,  name = "Hillsbrad Foothills",  x = 0.580, y = 0.478 },
+        { minLv = 25, maxLv = 35, mapID = 199, name = "Southern Barrens",     x = 0.416, y = 0.476 },
+        { minLv = 25, maxLv = 35, mapID = 50,  name = "Northern Stranglethorn", x = 0.376, y = 0.512 },
+        { minLv = 35, maxLv = 42, mapID = 22,  name = "Western Plaguelands",  x = 0.464, y = 0.646 },
+        { minLv = 40, maxLv = 50, mapID = 71,  name = "Tanaris",              x = 0.514, y = 0.294 },
+        { minLv = 48, maxLv = 55, mapID = 78,  name = "Un'Goro Crater",       x = 0.552, y = 0.626 },
+        { minLv = 54, maxLv = 60, mapID = 17,  name = "Blasted Lands",        x = 0.506, y = 0.142 },
+    },
+}
+
+-- Bulunulan harita seviyene gore kucuk kaldiysa siradaki en uygun bolgeyi onerir
+function Comfort:GetRecommendedNextZone(playerMapID)
+    local okLvl, lvl = ns:SafeGlobal("UnitLevel", "player")
+    if not okLvl or not ns:IsSafeNumber(lvl) or lvl <= 0 then
+        return nil
+    end
+
+    local okFac, fac = ns:SafeGlobal("UnitFactionGroup", "player")
+    local zones = (okFac and LEVELING_ZONES[fac]) or LEVELING_ZONES.Alliance
+    if not zones then
+        return nil
+    end
+
+    -- Oyuncu su an kendi seviyesine uygun bir bolgedeyse oneri gostermeye gerek yok
+    for i = 1, #zones do
+        local z = zones[i]
+        if z.mapID == playerMapID and lvl >= z.minLv and lvl <= z.maxLv then
+            return nil
+        end
+    end
+
+    -- Seviyeye en uygun bir sonraki bolgeyi sec
+    local best = nil
+    for i = 1, #zones do
+        local z = zones[i]
+        if z.mapID ~= playerMapID and lvl >= z.minLv and lvl <= z.maxLv then
+            best = z
+            break
+        end
+    end
+    if not best then
+        return nil
+    end
+
+    local zoneName = ns:GetMapName(best.mapID) or best.name
+    return {
+        questID = -(700000 + best.mapID),
+        title = string.format("[Bolge Onerisi] %s (Lv %d-%d)", zoneName, best.minLv, best.maxLv),
+        groupType = "service",
+        isComplete = false,
+        isAvailable = false,
+        isTrainer = true,
+        mapID = best.mapID,
+        x = best.x,
+        y = best.y,
+        dist = nil,
+        hasLocation = true,
+        isNearby = false,
+        zoneName = zoneName,
+        isInCurrentZone = false,
+    }
+end
+
+-- =====================================================================
+-- 8) Level Up Aninda Tek Satirlik Karakter Kontrolu
+-- =====================================================================
+local MOUNT_MILESTONES = { [10] = true, [20] = true, [30] = true, [40] = true }
+
+function Comfort:OnPlayerLevelUp(newLevel)
+    local db = ns.db or ns.DEFAULTS
+    if not db.levelUpChecklist then
+        return
+    end
+
+    local lvl = ns:IsSafeNumber(newLevel) and newLevel or nil
+    if not lvl then
+        local okL, l = ns:SafeGlobal("UnitLevel", "player")
+        lvl = (okL and ns:IsSafeNumber(l)) and l or nil
+    end
+    if not lvl then
+        return
+    end
+
+    local hints = {}
+
+    -- Kullanilmamis Talent puani kontrolu
+    local hasTalent = false
+    local okCT, hasCT = ns:TrySafeC("C_ClassTalents", "HasUnspentTalentPoints")
+    if okCT and hasCT == true then
+        hasTalent = true
+    else
+        local okUT, unspent = ns:SafeGlobal("GetUnspentTalentPoints")
+        if okUT and ns:IsSafeNumber(unspent) and unspent > 0 then
+            hasTalent = true
+        end
+    end
+    if hasTalent then
+        table.insert(hints, "Kullanilmamis Talent puanin var")
+    end
+
+    if MOUNT_MILESTONES[lvl] then
+        table.insert(hints, "Binek/binicilik egitimi acilmis olabilir")
+    end
+
+    if (lvl % 2) == 0 then
+        table.insert(hints, "Sinif egitmeninde yeni yetenek olabilir")
+    end
+
+    if #hints > 0 then
+        ns:Print(string.format("|cff33ff66Seviye %d!|r %s.", lvl, table.concat(hints, "  |  ")))
+    end
+end
+
+-- =====================================================================
+-- 9) Ekipman Dayanikliligi (< %30) Uyarisi
+-- =====================================================================
+local durabilityAlertSent = false
+
+function Comfort:CheckDurabilityAlert()
+    local db = ns.db or ns.DEFAULTS
+    if not db.durabilityAlert then
+        durabilityAlertSent = false
+        return
+    end
+
+    local lowestPct = 100
+    for slot = 1, 18 do
+        local okD, cur, maxVal = ns:SafeGlobal("GetInventoryItemDurability", slot)
+        if okD and ns:IsSafeNumber(cur) and ns:IsSafeNumber(maxVal) and maxVal > 0 then
+            local pct = (cur / maxVal) * 100
+            if pct < lowestPct then
+                lowestPct = pct
+            end
+        end
+    end
+
+    if lowestPct < 30 then
+        if not durabilityAlertSent then
+            durabilityAlertSent = true
+            local playerMapID, px, py, mapWidth, mapHeight = ns:GetPlayerPosition()
+            local services = self:GetNearestServices(playerMapID, px, py, mapWidth, mapHeight)
+            local vendor = services[1]
+            local extra = vendor and (" En yakin satici/tamirci: |cffffff00" .. vendor.title .. "|r") or ""
+            ns:Print(string.format("|cffff5555Ekipman dayanikliligi %%%d altina dustu!|r%s", math.floor(lowestPct + 0.5), extra))
+        end
+    else
+        durabilityAlertSent = false
+    end
+end
+
 ns:RegisterCallback("QUEST_COMPLETE", function()
     Comfort:HighlightBestSellReward()
 end)
@@ -637,7 +811,18 @@ ns:RegisterCallback("BAG_UPDATE_DELAYED", function()
     Comfort:RefreshQuestItemButton()
 end)
 
+ns:RegisterCallback("UPDATE_INVENTORY_DURABILITY", function()
+    Comfort:CheckDurabilityAlert()
+end)
+
+ns:RegisterCallback("PLAYER_LEVEL_UP", function(newLevel)
+    ns:TrySafeC("C_Timer", "After", 0.6, function()
+        Comfort:OnPlayerLevelUp(newLevel)
+    end)
+end)
+
 ns:RegisterCallback("CONFIG_CHANGED", function()
     Comfort:RefreshQuestItemButton()
     Comfort:CheckBagFullVendorAlert()
+    Comfort:CheckDurabilityAlert()
 end)
