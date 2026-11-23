@@ -131,7 +131,7 @@ function Nearby:ApplyAppearance()
     end
 
     if not ns:IsInCombat() then
-        if db.showQuestList == false then
+        if db.enableQuestModule == false or db.showQuestList == false then
             nearbyFrame:Hide()
             return
         end
@@ -1424,18 +1424,46 @@ local function CollectZoneGroupedQuests(playerMapID, px, py, mapWidth, mapHeight
         table.sort(otherZoneBuckets[otherZoneOrder[i]], SortItems)
     end
 
-    -- Render edilecek bolum listesini olustur
+    -- Render edilecek bolum listesini olustur (HER GOREV LISTEDE YALNIZCA 1 KEZ GOSTERILIR)
     local sections = {}
+    local shownQuestIDs = {}
     local db = ns.db or ns.DEFAULTS
 
-    -- Levelling Modu: Alinmamis yuksek XP/Ana gorevler ([AL!]) + mevcut gorevler ([YAP] / [Teslim])
+    local function TakeUniqueItems(rawList, maxCount)
+        local unique = {}
+        for i = 1, #rawList do
+            local it = rawList[i]
+            local qid = it.questID
+            if not qid or not shownQuestIDs[qid] then
+                if qid then
+                    shownQuestIDs[qid] = true
+                end
+                table.insert(unique, it)
+                if maxCount and #unique >= maxCount then
+                    break
+                end
+            end
+        end
+        return unique
+    end
+
+    -- 1) Levelling ile Devam: Yalnizca en oncelikli 3 oneri (+ varsa Bolge Onerisi)
     if db.levelingMode and ns.SmartQuest and playerMapID and mapWidth then
         local candidates = ns.SmartQuest:EvaluateAllCandidates(nil)
-        if #candidates > 0 then
-            local lvlItems = {}
-            local limit = math.min(#candidates, 10)
-            for i = 1, limit do
-                local c = candidates[i]
+        local lvlItems = {}
+        if ns.Comfort then
+            local nextZone = ns.Comfort:GetRecommendedNextZone(playerMapID)
+            if nextZone then
+                table.insert(lvlItems, nextZone)
+            end
+        end
+        local added = 0
+        for i = 1, #candidates do
+            if added >= 3 then break end
+            local c = candidates[i]
+            if not shownQuestIDs[c.questID] then
+                shownQuestIDs[c.questID] = true
+                added = added + 1
                 local actionTag = c.isAvailable and "|cff33ccff[AL!]|r "
                     or (c.isComplete and "|cff33ff66[Teslim]|r " or "|cffffd100[YAP]|r ")
                 table.insert(lvlItems, {
@@ -1457,14 +1485,8 @@ local function CollectZoneGroupedQuests(playerMapID, px, py, mapWidth, mapHeight
                     isDroppable = false,
                 })
             end
-            -- Bulundugun bolge seviyene gore kucuk kaldiysa siradaki bolgeyi tek satir olarak en uste ekle
-            if ns.Comfort then
-                local nextZone = ns.Comfort:GetRecommendedNextZone(playerMapID)
-                if nextZone then
-                    table.insert(lvlItems, 1, nextZone)
-                end
-            end
-
+        end
+        if #lvlItems > 0 then
             table.insert(sections, {
                 key = "leveling_plan",
                 label = "Levelling ile Devam",
@@ -1475,80 +1497,91 @@ local function CollectZoneGroupedQuests(playerMapID, px, py, mapWidth, mapHeight
         end
     end
 
-    -- Ozellik 1: Birlikte yapilabilecek gorevler grubu
+    -- 2) Birlikte yapilabilecek gorevler grubu (yalnizca yukarida gosterilmemislerden >=2 varsa)
     if db.showClusters and ns.SmartQuest and playerMapID and mapWidth then
         local clusters = ns.SmartQuest:GetCurrentMapClusters()
         for c = 1, #clusters do
             local cl = clusters[c]
-            local clusterItems = {}
+            local clusterCandidates = {}
             for m = 1, #cl.members do
                 local mem = cl.members[m]
-                table.insert(clusterItems, {
-                    questID = mem.questID,
-                    title = mem.title,
-                    groupType = mem.isComplete and "completed" or "active",
-                    isComplete = mem.isComplete,
-                    isAvailable = false,
-                    mapID = mem.mapID,
-                    x = mem.x,
-                    y = mem.y,
-                    dist = mem.dist,
-                    hasLocation = true,
-                    isNearby = (mem.dist <= radius),
-                    zoneName = currentZoneName,
-                    isInCurrentZone = true,
-                    difficultyTag = ns.Comfort and ns.Comfort:GetQuestDifficultyTag(mem.questID, nil) or nil,
-                    isDroppable = false,
+                if not shownQuestIDs[mem.questID] then
+                    table.insert(clusterCandidates, {
+                        questID = mem.questID,
+                        title = mem.title,
+                        groupType = mem.isComplete and "completed" or "active",
+                        isMain = ns:IsMainQuest(mem.questID, nil, playerMapID),
+                        isComplete = mem.isComplete,
+                        isAvailable = false,
+                        mapID = mem.mapID,
+                        x = mem.x,
+                        y = mem.y,
+                        dist = mem.dist,
+                        hasLocation = true,
+                        isNearby = (mem.dist <= radius),
+                        zoneName = currentZoneName,
+                        isInCurrentZone = true,
+                        difficultyTag = ns.Comfort and ns.Comfort:GetQuestDifficultyTag(mem.questID, nil) or nil,
+                        isDroppable = false,
+                    })
+                end
+            end
+            if #clusterCandidates >= 2 then
+                local taken = TakeUniqueItems(clusterCandidates)
+                table.insert(sections, {
+                    key = "cluster_" .. c,
+                    label = string.format("Bu bolgede %d gorev birlikte yapilabilir", #taken),
+                    color = "|cff55ffcc",
+                    bgR = 0.06, bgG = 0.24, bgB = 0.22,
+                    items = taken,
                 })
             end
-            table.insert(sections, {
-                key = "cluster_" .. c,
-                label = string.format("Bu bolgede %d gorev birlikte yapilabilir", cl.count),
-                color = "|cff55ffcc",
-                bgR = 0.06, bgG = 0.24, bgB = 0.22,
-                items = clusterItems,
-            })
         end
     end
 
-    if #currentZoneGroups.completed > 0 then
+    -- 3) Kalan mevcut bolge gorevleri (tekrarsiz)
+    local remCompleted = TakeUniqueItems(currentZoneGroups.completed)
+    if #remCompleted > 0 then
         table.insert(sections, {
             key = "cur_completed",
             label = currentZoneName .. " - Tamamlanan",
             color = "|cff33ff66",
             bgR = 0.08, bgG = 0.25, bgB = 0.12,
-            items = currentZoneGroups.completed,
+            items = remCompleted,
         })
     end
-    if #currentZoneGroups.main > 0 then
+    local remMain = TakeUniqueItems(currentZoneGroups.main)
+    if #remMain > 0 then
         table.insert(sections, {
             key = "cur_main",
             label = currentZoneName .. " - Ana Gorevler",
             color = "|cffff9e22",
             bgR = 0.30, bgG = 0.16, bgB = 0.04,
-            items = currentZoneGroups.main,
+            items = remMain,
         })
     end
-    if #currentZoneGroups.side > 0 then
+    local remSide = TakeUniqueItems(currentZoneGroups.side)
+    if #remSide > 0 then
         table.insert(sections, {
             key = "cur_side",
             label = currentZoneName .. " - Yan Gorevler",
             color = "|cffffd955",
             bgR = 0.22, bgG = 0.19, bgB = 0.06,
-            items = currentZoneGroups.side,
+            items = remSide,
         })
     end
-    if #currentZoneGroups.available > 0 then
+    local remAvail = TakeUniqueItems(currentZoneGroups.available)
+    if #remAvail > 0 then
         table.insert(sections, {
             key = "cur_available",
             label = currentZoneName .. " - Alinmayan",
             color = "|cff33ccff",
             bgR = 0.06, bgG = 0.18, bgB = 0.26,
-            items = currentZoneGroups.available,
+            items = remAvail,
         })
     end
 
-    -- Sinifa uygun EN YAKIN 1 Class Trainer (limit = 1)
+    -- 4) Sinifa uygun EN YAKIN 1 Class Trainer (limit = 1)
     local nearestTrainer = FindNearestClassTrainer(playerMapID, px, py, mapWidth, mapHeight)
     if nearestTrainer then
         table.insert(sections, {
@@ -1560,7 +1593,7 @@ local function CollectZoneGroupedQuests(playerMapID, px, py, mapWidth, mapHeight
         })
     end
 
-    -- Ozellik 6: En Yakin Hizmetler (Satici, Posta, Han, Ucus Noktasi)
+    -- 5) En Yakin Hizmetler (Satici, Posta, Han, Ucus Noktasi)
     if ns.Comfort then
         local services = ns.Comfort:GetNearestServices(playerMapID, px, py, mapWidth, mapHeight)
         if #services > 0 then
@@ -1574,15 +1607,19 @@ local function CollectZoneGroupedQuests(playerMapID, px, py, mapWidth, mapHeight
         end
     end
 
+    -- 6) Diger bolgelerdeki gorevler (tekrarsiz)
     for i = 1, #otherZoneOrder do
         local zName = otherZoneOrder[i]
-        table.insert(sections, {
-            key = "zone_" .. zName,
-            label = zName,
-            color = "|cffb8c4e0",
-            bgR = 0.14, bgG = 0.16, bgB = 0.24,
-            items = otherZoneBuckets[zName],
-        })
+        local uniqueOther = TakeUniqueItems(otherZoneBuckets[zName])
+        if #uniqueOther > 0 then
+            table.insert(sections, {
+                key = "zone_" .. zName,
+                label = zName,
+                color = "|cffb8c4e0",
+                bgR = 0.14, bgG = 0.16, bgB = 0.24,
+                items = uniqueOther,
+            })
+        end
     end
 
     -- Faz 4: Arama filtresi aktifse sadece eslesen gorevleri/bolgeleri goster
@@ -1622,7 +1659,7 @@ function Nearby:ScanOnce()
     end
 
     local db = ns.db or ns.DEFAULTS
-    if db.showQuestList == false then
+    if db.enableQuestModule == false or db.showQuestList == false then
         if not ns:IsInCombat() and nearbyFrame:IsShown() then
             nearbyFrame:Hide()
         end

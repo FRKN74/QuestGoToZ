@@ -1,7 +1,7 @@
 local addonName, ns = ...
 
 ns.name = addonName
-ns.version = "1.2.0"
+ns.version = "1.3.0"
 
 -- Varsayilan SavedVariables profil ayarlari
 ns.DEFAULTS = {
@@ -29,11 +29,23 @@ ns.DEFAULTS = {
     showWorldMapPins = true,     -- Dunya haritasinda (M) gorev pinleri ve yesil daireler
     showQuestLevel = true,       -- Gorev listesinde renkli [Lv] etiketi
     partySync = true,            -- Parti arkadaslariyla canli gorev ilerlemesi senkronu
+    enableQuestModule = true,    -- Ana Gorev Modulu (Liste + Ok + Kart + Harita + Mob Rozeti)
     levelingMode = true,         -- Levelling gorevleri ile devam (alinmamis yuksek XP + mevcut)
     showBanner = true,           -- Ust-orta AAP tarzi aktif gorev karti
     showUpgradeArrows = true,    -- Cantada daha yuksek ilvl esya icin yesil yukari ok
     durabilityAlert = true,      -- Zirh dayanikliligi <%30 olunca tamirci uyarisi
     levelUpChecklist = true,     -- Level atlayinca tek satirlik talent/binek/egitmen kontrolu
+    tankThreatColors = true,     -- Tank aggro nameplate renkleri (bende=yesil, degil=kirmizi)
+    showThreatMeter = true,      -- Bagimsiz Threat Meter penceresi (salt okunur tehdit listesi)
+    threatOnlyInCombat = false,  -- Sadece tehdit/savas varken goster
+    threatShowPullLine = true,   -- Pull Aggro esik satirini goster
+    threatIncludePets = true,    -- Petleri threat listesine dahil et
+    threatMode = "pull",         -- "pull" (% Pull Aggro) veya "raw" (Ham Threat)
+    threatSource = "target",     -- "target" veya "focus"
+    showPartyFrames = true,      -- Solda 5 kisilik grup cercevesi (Can/Mana/Lv/Heal)
+    partyShowSolo = true,        -- Tek basina iken de grup cercevesini goster
+    partyHealSpell = "",         -- Sag tik heal buyusu (bos = sinif varsayilani)
+    partyShiftHealSpell = "",    -- Shift+Sol tik ikincil heal/dispel buyusu
     showQuestList = true,        -- Gorev penceresini goster/gizle
     panelCollapsed = false,      -- Gorev penceresi daraltilmis mi (ac/kapa)
     panelAlpha = 35,             -- Gorev penceresi arka plan opakligi (%10 - %95, dusuk = daha transparan)
@@ -76,6 +88,22 @@ ns.DEFAULTS = {
         relativePoint = "TOP",
         x = 0,
         y = -68,
+    },
+    partyPos = {
+        point = "LEFT",
+        relativePoint = "LEFT",
+        x = 18,
+        y = 40,
+    },
+    threatPos = {
+        point = "BOTTOMRIGHT",
+        relativePoint = "BOTTOMRIGHT",
+        x = -24,
+        y = 140,
+    },
+    threatSize = {
+        width = 248,
+        height = 176,
     },
     layoutVersion = 3,
 }
@@ -150,6 +178,16 @@ end
 
 function ns:IsSafeString(val)
     if type(val) ~= "string" then
+        return false
+    end
+    if type(_G.issecretvalue) == "function" and _G.issecretvalue(val) then
+        return false
+    end
+    return true
+end
+
+function ns:IsSafeBoolean(val)
+    if type(val) ~= "boolean" then
         return false
     end
     if type(_G.issecretvalue) == "function" and _G.issecretvalue(val) then
@@ -356,6 +394,8 @@ function ns:SwitchProfile(profileName)
     if self.Arrow then self.Arrow:ApplyPosition() end
     if self.Nearby then self.Nearby:ApplyPosition() end
     if self.Comfort then self.Comfort:ApplyQuestItemPosition() end
+    if self.SmartQuest then self.SmartQuest:ApplyBannerPosition() end
+    if self.PartyFrames then self.PartyFrames:ApplyPosition() end
     self:FireCallback("CONFIG_CHANGED")
     self:Print("Profil degistirildi: |cffffff00" .. profileName .. "|r")
     return true

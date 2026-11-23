@@ -874,7 +874,7 @@ function SmartQuest:UpdateBanner()
         return
     end
     local db = ns.db or ns.DEFAULTS
-    if not db.showBanner then
+    if db.enableQuestModule == false or not db.showBanner then
         if not ns:IsInCombat() and bannerFrame:IsShown() then
             bannerFrame:Hide()
         end

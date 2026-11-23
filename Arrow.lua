@@ -519,6 +519,11 @@ function Arrow:UpdateOnce()
         return
     end
 
+    if ns.db and ns.db.enableQuestModule == false then
+        HideAllGuidesSafely()
+        return
+    end
+
     local target = ns.activeTarget
     if not target then
         HideAllGuidesSafely()

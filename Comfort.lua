@@ -589,7 +589,7 @@ function Comfort:RefreshQuestItemButton()
     -- SecureActionButton ayarlari ASLA savasta degistirilmez
     ns:RunOutOfCombat("refresh_quest_item_btn", function()
         local db = ns.db or ns.DEFAULTS
-        if not db.showQuestItemButton then
+        if db.enableQuestModule == false or not db.showQuestItemButton then
             questItemBtn:Hide()
             return
         end

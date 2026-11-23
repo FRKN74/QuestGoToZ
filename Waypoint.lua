@@ -432,6 +432,13 @@ function Waypoint:RefreshTrackerButtons()
         return
     end
 
+    if ns.db and ns.db.enableQuestModule == false then
+        for _, btn in pairs(blockButtons) do
+            btn:Hide()
+        end
+        return
+    end
+
     wipe(activeTrackerBlocks)
 
     for i = 1, #TRACKER_MODULE_NAMES do
@@ -695,7 +702,7 @@ function Waypoint:RefreshWorldMapCompletedCircles()
         return
     end
     local db = ns.db or ns.DEFAULTS
-    if not db.showWorldMapPins then
+    if db.enableQuestModule == false or not db.showWorldMapPins then
         for i = 1, #worldMapPins do
             worldMapPins[i]:Hide()
         end
@@ -950,6 +957,11 @@ ns:RegisterCallback("QUEST_REMOVED", function(questID)
         ns:ClearQuestWaypoint(true)
     end
     lastKnownComplete[questID] = nil
+    Waypoint:RequestTrackerRefresh()
+    Waypoint:RefreshWorldMapCompletedCircles()
+end)
+
+ns:RegisterCallback("CONFIG_CHANGED", function()
     Waypoint:RequestTrackerRefresh()
     Waypoint:RefreshWorldMapCompletedCircles()
 end)

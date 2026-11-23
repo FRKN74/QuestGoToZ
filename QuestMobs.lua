@@ -89,24 +89,41 @@ local function ExtractProgressText(text)
     return nil, false
 end
 
+-- Dungeon / Raid / PvP instance icinde Midnight nameplate kisitlamasi nedeniyle rozetleri kapat
+local function IsRestrictedInstance()
+    local okInst, inInstance, instType = ns:SafeGlobal("IsInInstance")
+    if okInst and ns:IsSafeBoolean(inInstance) and inInstance then
+        if not ns:IsSafeString(instType) or instType ~= "none" then
+            return true
+        end
+    end
+    return false
+end
+
+local function HideAllNameplateBadges()
+    for _, badge in pairs(nameplateBadges) do
+        badge:Hide()
+    end
+end
+
 -- Unit'in aktif (tamamlanmamis) bir gorev hedefi olup olmadigini kontrol eder
 local function GetUnitQuestInfo(unit)
-    if not ns:IsSafeString(unit) then
+    if IsRestrictedInstance() or not ns:IsSafeString(unit) then
         return nil
     end
 
     local okExists, exists = ns:SafeGlobal("UnitExists", unit)
-    if not okExists or not exists then
+    if not okExists or not ns:IsSafeBoolean(exists) or not exists then
         return nil
     end
 
     local okPlayer, isPlayer = ns:SafeGlobal("UnitIsPlayer", unit)
-    if okPlayer and isPlayer then
+    if okPlayer and ns:IsSafeBoolean(isPlayer) and isPlayer then
         return nil
     end
 
     local okDead, isDead = ns:SafeGlobal("UnitIsDead", unit)
-    if okDead and isDead then
+    if okDead and ns:IsSafeBoolean(isDead) and isDead then
         return nil
     end
 
@@ -122,13 +139,14 @@ local function GetUnitQuestInfo(unit)
             if type(line) == "table" then
                 local lType = line.type
                 local lText = line.leftText
+                local completedSafe = ns:IsSafeBoolean(line.completed) and line.completed or nil
 
-                if LINE_TYPE_QUEST_TITLE and lType == LINE_TYPE_QUEST_TITLE then
+                if LINE_TYPE_QUEST_TITLE and ns:IsSafeNumber(lType) and lType == LINE_TYPE_QUEST_TITLE then
                     currentQuestID = ns:IsSafeNumber(line.id) and line.id or nil
                     currentQuestTitle = ns:IsSafeString(lText) and lText or nil
-                elseif (LINE_TYPE_QUEST_OBJECTIVE and lType == LINE_TYPE_QUEST_OBJECTIVE)
-                    or (line.completed == false and ns:IsSafeString(lText)) then
-                    local isCompleted = (line.completed == true)
+                elseif (LINE_TYPE_QUEST_OBJECTIVE and ns:IsSafeNumber(lType) and lType == LINE_TYPE_QUEST_OBJECTIVE)
+                    or (completedSafe == false and ns:IsSafeString(lText)) then
+                    local isCompleted = (completedSafe == true)
                     local progText, progDone = ExtractProgressText(lText)
                     if not isCompleted and not progDone then
                         local isActiveTarget = (ns.activeQuestID ~= nil and currentQuestID ~= nil and currentQuestID == ns.activeQuestID)
@@ -158,7 +176,7 @@ local function GetUnitQuestInfo(unit)
 
     -- 2) Yedek: C_QuestLog.UnitIsRelatedToActiveQuest varsa kontrol et
     local okRel, isRelated = ns:TrySafeC("C_QuestLog", "UnitIsRelatedToActiveQuest", unit)
-    if okRel and isRelated == true then
+    if okRel and ns:IsSafeBoolean(isRelated) and isRelated == true then
         return {
             questID = nil,
             questTitle = nil,
@@ -214,15 +232,36 @@ local function GetOrCreateBadge(plate)
 end
 
 function QuestMobs:UpdateUnit(unit)
+    if (ns.db and ns.db.enableQuestModule == false) or IsRestrictedInstance() then
+        HideAllNameplateBadges()
+        return
+    end
+    if not ns:IsSafeString(unit) then
+        return
+    end
+
     local okPlate, plate = ns:TrySafeC("C_NamePlate", "GetNamePlateForUnit", unit)
     if not okPlate or not plate then
         return
     end
+    if type(plate.IsForbidden) == "function" then
+        local okForb, forb = pcall(plate.IsForbidden, plate)
+        if not okForb or (ns:IsSafeBoolean(forb) and forb) or not ns:IsSafeBoolean(forb) then
+            return
+        end
+    end
     activeUnits[unit] = plate
 
-    local info = GetUnitQuestInfo(unit)
+    local okInfo, info = pcall(GetUnitQuestInfo, unit)
+    if not okInfo then
+        info = nil
+    end
     if info then
         local badge = GetOrCreateBadge(plate)
+        pcall(function()
+            badge:ClearAllPoints()
+            badge:SetPoint("RIGHT", plate, "LEFT", -3, 0)
+        end)
         badge.icon:SetTexture(info.isLoot and ICON_LOOT or ICON_KILL)
 
         if info.isActiveTarget then
@@ -265,6 +304,10 @@ function QuestMobs:RemoveUnit(unit)
 end
 
 function QuestMobs:RefreshAllNameplates()
+    if (ns.db and ns.db.enableQuestModule == false) or IsRestrictedInstance() then
+        HideAllNameplateBadges()
+        return
+    end
     local okAll, plates = ns:TrySafeC("C_NamePlate", "GetNamePlates")
     if okAll and type(plates) == "table" then
         for i = 1, #plates do
@@ -282,15 +325,15 @@ end
 
 -- Bir mob icin tum tamamlanmamis gorev eslesmelerini dondurur (coklu gorev destegi)
 local function GetUnitAllQuestInfos(unit)
-    if not ns:IsSafeString(unit) then
+    if IsRestrictedInstance() or not ns:IsSafeString(unit) then
         return {}
     end
     local okExists, exists = ns:SafeGlobal("UnitExists", unit)
-    if not okExists or not exists then
+    if not okExists or not ns:IsSafeBoolean(exists) or not exists then
         return {}
     end
     local okPlayer, isPlayer = ns:SafeGlobal("UnitIsPlayer", unit)
-    if okPlayer and isPlayer then
+    if okPlayer and ns:IsSafeBoolean(isPlayer) and isPlayer then
         return {}
     end
 
@@ -307,13 +350,14 @@ local function GetUnitAllQuestInfos(unit)
             if type(line) == "table" then
                 local lType = line.type
                 local lText = line.leftText
+                local completedSafe = ns:IsSafeBoolean(line.completed) and line.completed or nil
 
-                if LINE_TYPE_QUEST_TITLE and lType == LINE_TYPE_QUEST_TITLE then
+                if LINE_TYPE_QUEST_TITLE and ns:IsSafeNumber(lType) and lType == LINE_TYPE_QUEST_TITLE then
                     currentQuestID = ns:IsSafeNumber(line.id) and line.id or nil
                     currentQuestTitle = ns:IsSafeString(lText) and lText or nil
-                elseif (LINE_TYPE_QUEST_OBJECTIVE and lType == LINE_TYPE_QUEST_OBJECTIVE)
-                    or (line.completed == false and ns:IsSafeString(lText)) then
-                    local isCompleted = (line.completed == true)
+                elseif (LINE_TYPE_QUEST_OBJECTIVE and ns:IsSafeNumber(lType) and lType == LINE_TYPE_QUEST_OBJECTIVE)
+                    or (completedSafe == false and ns:IsSafeString(lText)) then
+                    local isCompleted = (completedSafe == true)
                     local progText, progDone = ExtractProgressText(lText)
                     if not isCompleted and not progDone then
                         local qName = currentQuestTitle
@@ -773,7 +817,7 @@ local function UpdateBagButton(itemButton, explicitBagID)
         end
     end
 
-    if IsBagSlotQuestItem(bagID, slotID) then
+    if not (ns.db and ns.db.enableQuestModule == false) and IsBagSlotQuestItem(bagID, slotID) then
         local border = GetOrCreateBagBorder(itemButton)
         border:Show()
     else
@@ -892,15 +936,119 @@ local function InstallBagHooks()
     end
 end
 
+-- =====================================================================
+-- Tank Aggro Nameplate Can Bari Renkleri (Bende=Yesil, Kayiyor=Turuncu, Degil=Kirmizi)
+-- Midnight secret/forbidden korumali: kisitliysa sessizce atlar, 0 hata.
+-- =====================================================================
+local threatHookInstalled = false
+
+local function ApplyTankThreatColor(unitFrame)
+    local db = ns.db or ns.DEFAULTS
+    if not db.tankThreatColors or type(unitFrame) ~= "table" then
+        return
+    end
+
+    if type(unitFrame.IsForbidden) == "function" then
+        local okF, forb = pcall(unitFrame.IsForbidden, unitFrame)
+        if not okF or not ns:IsSafeBoolean(forb) or forb then
+            return
+        end
+    end
+
+    local unit = unitFrame.displayedUnit or unitFrame.unit
+    if not ns:IsSafeString(unit) or not unit:match("^nameplate") then
+        return
+    end
+
+    local hb = unitFrame.healthBar
+    if type(hb) ~= "table" or type(hb.SetStatusBarColor) ~= "function" then
+        return
+    end
+
+    local okP, isPlayer = ns:SafeGlobal("UnitIsPlayer", unit)
+    if okP and ns:IsSafeBoolean(isPlayer) and isPlayer then
+        return
+    end
+
+    local okAtk, canAttack = ns:SafeGlobal("UnitCanAttack", "player", unit)
+    if not (okAtk and ns:IsSafeBoolean(canAttack) and canAttack) then
+        return
+    end
+
+    local okCmb, inCombat = ns:SafeGlobal("UnitAffectingCombat", unit)
+    if not (okCmb and ns:IsSafeBoolean(inCombat) and inCombat) then
+        return
+    end
+
+    local okT, status = ns:SafeGlobal("UnitThreatSituation", "player", unit)
+    if not okT then
+        return
+    end
+
+    -- Midnight'ta status secret number donerse sessizce atla
+    if status ~= nil and not ns:IsSafeNumber(status) then
+        return
+    end
+
+    if status == 3 then
+        -- Aggro kesin sende: YESIL
+        pcall(hb.SetStatusBarColor, hb, 0.15, 0.92, 0.32)
+    elseif status == 2 then
+        -- Aggro sende ama kaybetmek uzeresin: TURUNCU/SARI
+        pcall(hb.SetStatusBarColor, hb, 1.0, 0.72, 0.12)
+    else
+        -- Savasta ama aggro sende DEGIL (nil, 0 veya 1): PARLAK KIRMIZI
+        pcall(hb.SetStatusBarColor, hb, 1.0, 0.14, 0.14)
+    end
+end
+
+function QuestMobs:RefreshThreatColors()
+    local db = ns.db or ns.DEFAULTS
+    if not db.tankThreatColors then
+        return
+    end
+    local okAll, plates = ns:TrySafeC("C_NamePlate", "GetNamePlates")
+    if okAll and type(plates) == "table" then
+        for i = 1, #plates do
+            local p = plates[i]
+            if type(p) == "table" then
+                local okF, forb = true, false
+                if type(p.IsForbidden) == "function" then
+                    okF, forb = pcall(p.IsForbidden, p)
+                end
+                if okF and ns:IsSafeBoolean(forb) and not forb and type(p.UnitFrame) == "table" then
+                    pcall(ApplyTankThreatColor, p.UnitFrame)
+                end
+            end
+        end
+    end
+end
+
+local function InstallThreatHooks()
+    if threatHookInstalled then
+        return
+    end
+    threatHookInstalled = true
+
+    if type(_G.CompactUnitFrame_UpdateHealthColor) == "function" then
+        hooksecurefunc("CompactUnitFrame_UpdateHealthColor", function(frame)
+            pcall(ApplyTankThreatColor, frame)
+        end)
+    end
+end
+
 -- Nameplate ve canta olaylari icin ayri hafif event cercevesi
 local plateEventFrame = CreateFrame("Frame", "QuestGoToZMobEventFrame")
 plateEventFrame:RegisterEvent("NAME_PLATE_UNIT_ADDED")
 plateEventFrame:RegisterEvent("NAME_PLATE_UNIT_REMOVED")
 plateEventFrame:RegisterEvent("UNIT_QUEST_LOG_CHANGED")
 plateEventFrame:RegisterEvent("BAG_UPDATE_DELAYED")
+plateEventFrame:RegisterEvent("UNIT_THREAT_SITUATION_UPDATE")
+plateEventFrame:RegisterEvent("UNIT_THREAT_LIST_UPDATE")
 plateEventFrame:SetScript("OnEvent", function(_, event, unit)
     if event == "NAME_PLATE_UNIT_ADDED" then
         QuestMobs:UpdateUnit(unit)
+        QuestMobs:RefreshThreatColors()
     elseif event == "NAME_PLATE_UNIT_REMOVED" then
         QuestMobs:RemoveUnit(unit)
     elseif event == "UNIT_QUEST_LOG_CHANGED" and unit == "player" then
@@ -908,14 +1056,18 @@ plateEventFrame:SetScript("OnEvent", function(_, event, unit)
         QuestMobs:RefreshBagHighlights()
     elseif event == "BAG_UPDATE_DELAYED" then
         QuestMobs:RefreshBagHighlights()
+    elseif event == "UNIT_THREAT_SITUATION_UPDATE" or event == "UNIT_THREAT_LIST_UPDATE" then
+        QuestMobs:RefreshThreatColors()
     end
 end)
 
 ns:RegisterCallback("PLAYER_LOGIN", function()
     InstallTooltipHook()
     InstallBagHooks()
+    InstallThreatHooks()
     QuestMobs:RefreshAllNameplates()
     QuestMobs:RefreshBagHighlights()
+    QuestMobs:RefreshThreatColors()
 end)
 
 ns:RegisterCallback("QUEST_LOG_UPDATE", function()
@@ -923,6 +1075,20 @@ ns:RegisterCallback("QUEST_LOG_UPDATE", function()
     QuestMobs:RefreshBagHighlights()
 end)
 
+ns:RegisterCallback("ZONE_CHANGED_NEW_AREA", function()
+    if IsRestrictedInstance() then
+        HideAllNameplateBadges()
+    else
+        QuestMobs:RefreshAllNameplates()
+    end
+end)
+
 ns:RegisterCallback("TARGET_CHANGED", function()
     QuestMobs:RefreshAllNameplates()
+end)
+
+ns:RegisterCallback("CONFIG_CHANGED", function()
+    QuestMobs:RefreshAllNameplates()
+    QuestMobs:RefreshBagHighlights()
+    QuestMobs:RefreshThreatColors()
 end)
