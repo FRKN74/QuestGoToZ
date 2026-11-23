@@ -5,8 +5,11 @@ ns.PartyFrames = PartyFrames
 
 local FRAME_WIDTH = 188
 local TOP_PADDING = 4
+local BOTTOM_RESIZE_PAD = 10
 local UNIT_HEIGHT = 38
 local UNIT_GAP = 4
+local MIN_WIDTH, MAX_WIDTH = 140, 360
+local MIN_UNIT_H, MAX_UNIT_H = 28, 72
 local UNITS = { "player", "party1", "party2", "party3", "party4" }
 
 local DEFAULT_HEAL_BY_CLASS = {
@@ -29,6 +32,39 @@ local POWER_COLORS = {
 local containerFrame = nil
 local unitButtons = {}
 local updateTicker = nil
+local currentVisibleCount = 1
+local isResizing = false
+
+local function GetPartyDimensions()
+    local db = ns.db or ns.DEFAULTS
+    local sz = (db and db.partySize) or ns.DEFAULTS.partySize
+    local w = (sz and ns:IsSafeNumber(sz.width)) and sz.width or FRAME_WIDTH
+    local uh = (sz and ns:IsSafeNumber(sz.unitHeight)) and sz.unitHeight or UNIT_HEIGHT
+    w = math.max(MIN_WIDTH, math.min(MAX_WIDTH, math.floor(w + 0.5)))
+    uh = math.max(MIN_UNIT_H, math.min(MAX_UNIT_H, math.floor(uh + 0.5)))
+    return w, uh
+end
+
+local function ApplyButtonDimensions(btn, w, uh)
+    if not btn then return end
+    btn:SetSize(w - 10, uh)
+    local mpH = math.max(5, math.min(16, math.floor(uh * 0.22)))
+    local hpH = math.max(14, uh - mpH - 6)
+    if btn.hpBar then
+        btn.hpBar:SetHeight(hpH)
+    end
+    if btn.mpBar then
+        btn.mpBar:SetHeight(mpH)
+    end
+    local nameSize = math.max(10, math.min(16, math.floor(uh * 0.30)))
+    local hpSize = math.max(9, math.min(15, math.floor(uh * 0.27)))
+    if btn.nameText then
+        btn.nameText:SetFont("Fonts\\ARIALN.TTF", nameSize, "")
+    end
+    if btn.hpText then
+        btn.hpText:SetFont("Fonts\\ARIALN.TTF", hpSize, "")
+    end
+end
 
 local isSecretFn = _G.issecretvalue
 local function IsSecret(v)
@@ -97,6 +133,7 @@ function PartyFrames:ApplyPosition()
     containerFrame:ClearAllPoints()
     containerFrame:SetPoint(pos.point, UIParent, pos.relativePoint, pos.x, pos.y)
     self:ApplyAppearance()
+    self:RebuildLayout()
 end
 
 function PartyFrames:ApplyAppearance()
@@ -116,6 +153,9 @@ function PartyFrames:UpdateLockState()
     end
     local locked = ns.db and ns.db.locked
     containerFrame:SetMovable(not locked)
+    if containerFrame.resizeBtn then
+        containerFrame.resizeBtn:SetShown(not locked)
+    end
 end
 
 local function GetUnitClassColor(unit)
@@ -302,11 +342,18 @@ local function CreatePartyContainer()
     end
 
     local f = CreateFrame("Frame", "QuestGoToZPartyFrame", UIParent, "BackdropTemplate")
-    f:SetSize(FRAME_WIDTH, TOP_PADDING * 2 + UNIT_HEIGHT)
+    f:SetSize(FRAME_WIDTH, TOP_PADDING + BOTTOM_RESIZE_PAD + UNIT_HEIGHT)
     f:SetFrameStrata("MEDIUM")
     f:SetClampedToScreen(true)
     f:EnableMouse(true)
     f:SetMovable(true)
+    f:SetResizable(true)
+    if f.SetResizeBounds then
+        f:SetResizeBounds(MIN_WIDTH, TOP_PADDING + BOTTOM_RESIZE_PAD + MIN_UNIT_H, MAX_WIDTH, TOP_PADDING + BOTTOM_RESIZE_PAD + 5 * MAX_UNIT_H + 4 * UNIT_GAP)
+    elseif f.SetMinResize then
+        f:SetMinResize(MIN_WIDTH, TOP_PADDING + BOTTOM_RESIZE_PAD + MIN_UNIT_H)
+        f:SetMaxResize(MAX_WIDTH, TOP_PADDING + BOTTOM_RESIZE_PAD + 5 * MAX_UNIT_H + 4 * UNIT_GAP)
+    end
     f:SetBackdrop({
         bgFile = "Interface\\Buttons\\WHITE8X8",
         edgeFile = "Interface\\Buttons\\WHITE8X8",
@@ -331,9 +378,61 @@ local function CreatePartyContainer()
         SavePosition(selfFrame)
     end)
 
+    -- Canli boyutlandirma: suruklerken tum uye kartlari anlik buyuyup kuculur
+    f:SetScript("OnSizeChanged", function(selfFrame, newW, newH)
+        if not isResizing or ns:IsInCombat() then
+            return
+        end
+        local cnt = math.max(1, currentVisibleCount)
+        local w = math.max(MIN_WIDTH, math.min(MAX_WIDTH, math.floor((newW or FRAME_WIDTH) + 0.5)))
+        local availH = (newH or 50) - TOP_PADDING - BOTTOM_RESIZE_PAD - (cnt - 1) * UNIT_GAP
+        local uh = math.max(MIN_UNIT_H, math.min(MAX_UNIT_H, math.floor((availH / cnt) + 0.5)))
+        local shownIdx = 0
+        for i = 1, #unitButtons do
+            local btn = unitButtons[i]
+            if btn and btn:IsShown() then
+                shownIdx = shownIdx + 1
+                ApplyButtonDimensions(btn, w, uh)
+                btn:ClearAllPoints()
+                btn:SetPoint("TOPLEFT", selfFrame, "TOPLEFT", 5, -(TOP_PADDING + (shownIdx - 1) * (uh + UNIT_GAP)))
+            end
+        end
+    end)
+
     for i = 1, #UNITS do
         unitButtons[i] = CreateUnitButton(f, UNITS[i], i)
     end
+
+    -- Sag-alt yeniden boyutlandirma tutamaci (Gorev listesi ile ayni)
+    local resizeBtn = CreateFrame("Button", nil, f)
+    resizeBtn:SetSize(12, 12)
+    resizeBtn:SetPoint("BOTTOMRIGHT", f, "BOTTOMRIGHT", -1, 1)
+    resizeBtn:SetFrameLevel((f:GetFrameLevel() or 1) + 10)
+    resizeBtn:SetNormalTexture("Interface\\ChatFrame\\UI-ChatIM-SizeGrabber-Up")
+    resizeBtn:SetHighlightTexture("Interface\\ChatFrame\\UI-ChatIM-SizeGrabber-Highlight")
+    resizeBtn:SetPushedTexture("Interface\\ChatFrame\\UI-ChatIM-SizeGrabber-Down")
+    resizeBtn:SetScript("OnMouseDown", function(_, button)
+        if button ~= "LeftButton" then return end
+        if ns:IsInCombat() or (ns.db and ns.db.locked) then return end
+        isResizing = true
+        f:StartSizing("BOTTOMRIGHT")
+    end)
+    resizeBtn:SetScript("OnMouseUp", function()
+        if not isResizing then return end
+        isResizing = false
+        f:StopMovingOrSizing()
+        if ns:IsInCombat() then return end
+        local newW, newH = f:GetSize()
+        local cnt = math.max(1, currentVisibleCount)
+        local w = math.max(MIN_WIDTH, math.min(MAX_WIDTH, math.floor((newW or FRAME_WIDTH) + 0.5)))
+        local availH = (newH or 50) - TOP_PADDING - BOTTOM_RESIZE_PAD - (cnt - 1) * UNIT_GAP
+        local uh = math.max(MIN_UNIT_H, math.min(MAX_UNIT_H, math.floor((availH / cnt) + 0.5)))
+        if ns.db then
+            ns.db.partySize = { width = w, unitHeight = uh }
+        end
+        PartyFrames:RebuildLayout()
+    end)
+    f.resizeBtn = resizeBtn
 
     containerFrame = f
     PartyFrames:ApplyPosition()
@@ -364,6 +463,7 @@ function PartyFrames:RebuildLayout()
 
         local healSpell = PartyFrames:GetActiveHealSpell()
         local shiftSpell = PartyFrames:GetShiftHealSpell()
+        local w, uh = GetPartyDimensions()
         local visibleCount = 0
 
         for i = 1, #UNITS do
@@ -388,8 +488,9 @@ function PartyFrames:RebuildLayout()
                     btn:SetAttribute("shift-type1", nil)
                     btn:SetAttribute("shift-spell1", nil)
                 end
+                ApplyButtonDimensions(btn, w, uh)
                 btn:ClearAllPoints()
-                btn:SetPoint("TOPLEFT", containerFrame, "TOPLEFT", 5, -(TOP_PADDING + (visibleCount - 1) * (UNIT_HEIGHT + UNIT_GAP)))
+                btn:SetPoint("TOPLEFT", containerFrame, "TOPLEFT", 5, -(TOP_PADDING + (visibleCount - 1) * (uh + UNIT_GAP)))
                 btn:Show()
             else
                 btn:Hide()
@@ -397,8 +498,9 @@ function PartyFrames:RebuildLayout()
         end
 
         local count = math.max(1, visibleCount)
-        local h = (TOP_PADDING * 2) + count * UNIT_HEIGHT + (count - 1) * UNIT_GAP
-        containerFrame:SetHeight(h)
+        currentVisibleCount = count
+        local h = TOP_PADDING + BOTTOM_RESIZE_PAD + count * uh + (count - 1) * UNIT_GAP
+        containerFrame:SetSize(w, h)
         containerFrame:Show()
         PartyFrames:ApplyAppearance()
         PartyFrames:UpdateBars()

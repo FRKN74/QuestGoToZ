@@ -1,7 +1,7 @@
 local addonName, ns = ...
 
 ns.name = addonName
-ns.version = "1.3.0"
+ns.version = "1.3.1"
 
 -- Varsayilan SavedVariables profil ayarlari
 ns.DEFAULTS = {
@@ -94,6 +94,10 @@ ns.DEFAULTS = {
         relativePoint = "LEFT",
         x = 18,
         y = 40,
+    },
+    partySize = {
+        width = 188,
+        unitHeight = 38,
     },
     threatPos = {
         point = "BOTTOMRIGHT",

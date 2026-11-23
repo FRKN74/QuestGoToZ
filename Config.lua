@@ -772,6 +772,10 @@ local function CreateConfigFrame()
             x = ns.DEFAULTS.partyPos.x,
             y = ns.DEFAULTS.partyPos.y,
         }
+        ns.db.partySize = {
+            width = ns.DEFAULTS.partySize.width,
+            unitHeight = ns.DEFAULTS.partySize.unitHeight,
+        }
         ns.db.threatPos = {
             point = ns.DEFAULTS.threatPos.point,
             relativePoint = ns.DEFAULTS.threatPos.relativePoint,
