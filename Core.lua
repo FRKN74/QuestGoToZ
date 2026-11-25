@@ -1,7 +1,7 @@
 local addonName, ns = ...
 
 ns.name = addonName
-ns.version = "1.3.2"
+ns.version = "1.3.3"
 
 -- Varsayilan SavedVariables profil ayarlari
 ns.DEFAULTS = {
@@ -36,10 +36,15 @@ ns.DEFAULTS = {
     durabilityAlert = true,      -- Zirh dayanikliligi <%30 olunca tamirci uyarisi
     levelUpChecklist = true,     -- Level atlayinca tek satirlik talent/binek/egitmen kontrolu
     tankThreatColors = true,     -- Tank aggro nameplate renkleri (bende=yesil, degil=kirmizi)
-    showThreatMeter = true,      -- Bagimsiz Threat Meter penceresi (salt okunur tehdit listesi)
+    showThreatMeter = true,      -- Bagimsiz Threat & Damage Meter penceresi
+    showGearAdvisorBtn = true,   -- OneForAll yaninda AH Ekipman Yukseltme butonu
+    gearMinimapAngle = 252,      -- Minimap buton acisi (OneForAll yaninda)
+    gearSortMode = "ilvl",       -- "ilvl" veya "price"
     threatOnlyInCombat = false,  -- Sadece tehdit/savas varken goster
     threatShowPullLine = true,   -- Pull Aggro esik satirini goster
     threatIncludePets = true,    -- Petleri threat listesine dahil et
+    threatView = "damage",       -- "damage" (DMG), "heal" (HEAL), "threat" (Threat)
+    damageSegment = "overall",   -- "current" (Anlik) veya "overall" (Genel/Dungeon)
     threatMode = "pull",         -- "pull" (% Pull Aggro) veya "raw" (Ham Threat)
     threatSource = "target",     -- "target" veya "focus"
     showPartyFrames = true,      -- Solda 5 kisilik grup cercevesi (Can/Mana/Lv/Heal)

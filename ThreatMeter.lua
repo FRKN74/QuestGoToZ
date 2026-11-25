@@ -77,6 +77,43 @@ local function ResolveThreatMob(sourceKey)
     return nil
 end
 
+local function GetDungeonInfo()
+    local ok, instName, instType = ns:SafeGlobal("GetInstanceInfo")
+    if ok and IsReadable(instType) and (instType == "party" or instType == "raid" or instType == "scenario") then
+        local safeName = (IsReadable(instName) and type(instName) == "string" and instName ~= "") and instName or "Dungeon"
+        return true, safeName
+    end
+    return false, nil
+end
+
+local function IsUnitInPlayerGroup(name)
+    if not (IsReadable(name) and type(name) == "string" and name ~= "") then
+        return true -- secret ise C_DamageMeter zaten grup kaynagini dondurur
+    end
+    local shortTarget = name:match("^([^%-]+)") or name
+    local function Matches(unit)
+        if not SafeUnitExists(unit) then return false end
+        local okN, uName = ns:SafeGlobal("UnitName", unit)
+        if okN and IsReadable(uName) and type(uName) == "string" then
+            local shortU = uName:match("^([^%-]+)") or uName
+            if shortU == shortTarget then return true end
+        end
+        return false
+    end
+    if Matches("player") then return true end
+    local okR, inRaid = ns:SafeGlobal("IsInRaid")
+    if okR and IsReadable(inRaid) and inRaid == true then
+        for i = 1, 40 do
+            if Matches(RAID_UNITS[i]) then return true end
+        end
+    else
+        for i = 1, 4 do
+            if Matches(PARTY_UNITS[i]) then return true end
+        end
+    end
+    return false
+end
+
 local function GetUnitClassRGB(unit)
     local owner = PET_OWNER[unit] or unit
     local okC, _, classFile = ns:SafeGlobal("UnitClass", owner)
@@ -264,30 +301,41 @@ local function EnsureMainFrame()
     local title = header:CreateFontString(nil, "OVERLAY")
     StyleFont(title, 11, 1.0, 0.86, 0.35)
     title:SetPoint("LEFT", header, "LEFT", 6, 0)
-    title:SetPoint("RIGHT", header, "RIGHT", -124, 0)
+    title:SetPoint("RIGHT", header, "RIGHT", -96, 0)
     title:SetJustifyH("LEFT")
     title:SetWordWrap(false)
-    title:SetText("Threat")
+    title:SetText("Dungeon")
     f.title = title
 
-    local testBtn = CreateHeaderBtn(header, 34, 16, "Test", function()
-        ThreatMeter:ToggleTest()
-    end)
-    testBtn:SetPoint("RIGHT", header, "RIGHT", -4, 0)
-    f.testBtn = testBtn
-
-    local modeBtn = CreateHeaderBtn(header, 42, 16, "%Pull", function()
+    local modeBtn = CreateHeaderBtn(header, 44, 16, "DMG", function(_, button)
         if not ns.db then return end
-        ns.db.threatMode = (ns.db.threatMode == "raw") and "pull" or "raw"
+        local cur = ns.db.threatView or "damage"
+        if cur == "threat" and button == "RightButton" then
+            ns.db.threatMode = (ns.db.threatMode == "raw") and "pull" or "raw"
+        else
+            if cur == "damage" then
+                ns.db.threatView = "heal"
+            elseif cur == "heal" then
+                ns.db.threatView = "threat"
+            else
+                ns.db.threatView = "damage"
+            end
+        end
         ThreatMeter:RefreshHeaderButtons()
         ThreatMeter:Update()
     end)
-    modeBtn:SetPoint("RIGHT", testBtn, "LEFT", -3, 0)
+    modeBtn:RegisterForClicks("LeftButtonUp", "RightButtonUp")
+    modeBtn:SetPoint("RIGHT", header, "RIGHT", -4, 0)
     f.modeBtn = modeBtn
 
-    local srcBtn = CreateHeaderBtn(header, 38, 16, "Hedef", function()
+    local srcBtn = CreateHeaderBtn(header, 40, 16, "Genel", function()
         if not ns.db then return end
-        ns.db.threatSource = (ns.db.threatSource == "focus") and "target" or "focus"
+        local cur = ns.db.threatView or "damage"
+        if cur == "threat" then
+            ns.db.threatSource = (ns.db.threatSource == "focus") and "target" or "focus"
+        else
+            ns.db.damageSegment = (ns.db.damageSegment == "current") and "overall" or "current"
+        end
         ThreatMeter:RefreshHeaderButtons()
         ThreatMeter:Update()
     end)
@@ -343,12 +391,19 @@ end
 
 function ThreatMeter:RefreshHeaderButtons()
     if not mainFrame or not ns.db then return end
-    mainFrame.modeBtn.label:SetText((ns.db.threatMode == "raw") and "Deger" or "%Pull")
-    mainFrame.srcBtn.label:SetText((ns.db.threatSource == "focus") and "Focus" or "Hedef")
-    if testMode then
-        mainFrame.testBtn.label:SetTextColor(1.0, 0.85, 0.25)
+    local view = ns.db.threatView or "damage"
+    if view == "damage" then
+        mainFrame.modeBtn.label:SetText("DMG")
+        mainFrame.modeBtn.label:SetTextColor(1.0, 0.55, 0.30)
+        mainFrame.srcBtn.label:SetText((ns.db.damageSegment == "current") and "Anlik" or "Genel")
+    elseif view == "heal" then
+        mainFrame.modeBtn.label:SetText("HEAL")
+        mainFrame.modeBtn.label:SetTextColor(0.35, 1.0, 0.55)
+        mainFrame.srcBtn.label:SetText((ns.db.damageSegment == "current") and "Anlik" or "Genel")
     else
-        mainFrame.testBtn.label:SetTextColor(0.90, 0.94, 1.0)
+        mainFrame.modeBtn.label:SetText((ns.db.threatMode == "raw") and "T:Dgr" or "T:%")
+        mainFrame.modeBtn.label:SetTextColor(0.55, 0.85, 1.0)
+        mainFrame.srcBtn.label:SetText((ns.db.threatSource == "focus") and "Focus" or "Hedef")
     end
 end
 
@@ -630,6 +685,179 @@ local function RenderEntries(f, headerTitle, entries)
     end
 end
 
+-- Midnight resmi C_DamageMeter (16001 secret-safe) DMG / HEAL render
+local function GetClassColorByFilename(classFile)
+    if IsReadable(classFile) and type(classFile) == "string" and _G.RAID_CLASS_COLORS and _G.RAID_CLASS_COLORS[classFile] then
+        local c = _G.RAID_CLASS_COLORS[classFile]
+        return c.r, c.g, c.b
+    end
+    return 0.45, 0.65, 0.85
+end
+
+local function FormatMeterVal(val)
+    if val == nil then return "0" end
+    if type(_G.AbbreviateNumbers) == "function" then
+        local ok, s = pcall(_G.AbbreviateNumbers, val)
+        if ok and s ~= nil then
+            return s
+        end
+    end
+    if IsReadable(val) and type(val) == "number" then
+        return FormatShortNumber(val)
+    end
+    return ""
+end
+
+local function BuildDamageTestRows(f, isHeal)
+    local samples = isHeal and {
+        { name = "1. Sifaci", tot = "342k", ps = "12.8k/s", pct = 100, isSelf = true, r = 0.95, g = 0.95, b = 0.95 },
+        { name = "2. Paladin", tot = "128k", ps = "4.8k/s", pct = 37, r = 0.96, g = 0.55, b = 0.73 },
+        { name = "3. Tankor", tot = "86k", ps = "3.2k/s", pct = 25, r = 0.78, g = 0.61, b = 0.43 },
+    } or {
+        { name = "1. Alevmaji", tot = "482k", ps = "18.4k/s", pct = 100, r = 0.25, g = 0.78, b = 0.92 },
+        { name = "2. Golgeavci", tot = "429k", ps = "16.3k/s", pct = 89, isSelf = true, r = 0.67, g = 0.83, b = 0.45 },
+        { name = "3. Savasci", tot = "395k", ps = "15.1k/s", pct = 82, r = 0.78, g = 0.61, b = 0.43 },
+        { name = "4. Tankor", tot = "240k", ps = "9.1k/s", pct = 50, r = 0.77, g = 0.12, b = 0.23 },
+        { name = "5. Sifaci", tot = "68k", ps = "2.6k/s", pct = 14, r = 0.95, g = 0.95, b = 0.95 },
+    }
+
+    f.title:SetText(isHeal and "Test: Heal (Genel)" or "Test: Hasar (Genel)")
+    f.emptyText:Hide()
+    local bodyH = f.body:GetHeight() or 120
+    local maxVisible = math.max(1, math.min(MAX_POOL_ROWS, math.floor((bodyH + ROW_GAP) / (ROW_HEIGHT + ROW_GAP))))
+
+    for i = 1, MAX_POOL_ROWS do
+        local row = rows[i]
+        local e = (i <= maxVisible) and samples[i] or nil
+        if e then
+            row:ClearAllPoints()
+            row:SetPoint("TOPLEFT", f.body, "TOPLEFT", 0, -((i - 1) * (ROW_HEIGHT + ROW_GAP)))
+            row:SetPoint("TOPRIGHT", f.body, "TOPRIGHT", 0, -((i - 1) * (ROW_HEIGHT + ROW_GAP)))
+            row.bar:SetMinMaxValues(0, 100)
+            row.bar:SetValue(e.pct)
+            row.bar:SetStatusBarColor(e.r, e.g, e.b, 0.84)
+            row.leftText:SetText(e.name)
+            row.rightText:SetText(e.tot .. " (" .. e.ps .. ")")
+            if e.isSelf then
+                row:SetBackdropBorderColor(1.0, 0.90, 0.35, 0.85)
+                row.leftText:SetTextColor(1.0, 0.96, 0.72)
+            else
+                row:SetBackdropBorderColor(1.0, 1.0, 1.0, 0.08)
+                row.leftText:SetTextColor(0.96, 0.98, 1.0)
+            end
+            row:Show()
+        else
+            row:Hide()
+        end
+    end
+end
+
+local function RenderDamageMeter(f, viewKey, dungeonName)
+    local db = ns.db or ns.DEFAULTS
+    local isHeal = (viewKey == "heal")
+    local isCurrent = (db.damageSegment == "current")
+
+    if testMode then
+        f:Show()
+        BuildDamageTestRows(f, isHeal)
+        return
+    end
+
+    local dm = _G.C_DamageMeter
+    local dmEnum = _G.Enum and _G.Enum.DamageMeterType
+    local sessEnum = _G.Enum and _G.Enum.DamageMeterSessionType
+    if not (dm and type(dm.GetCombatSessionFromType) == "function" and dmEnum and sessEnum) then
+        f.title:SetText(dungeonName or (isHeal and "Heal" or "Hasar"))
+        for i = 1, MAX_POOL_ROWS do rows[i]:Hide() end
+        f.emptyText:SetText("C_DamageMeter API bulunamadi.")
+        f.emptyText:Show()
+        f:Show()
+        return
+    end
+
+    local sessionType = isCurrent and sessEnum.Current or sessEnum.Overall
+    local meterType = isHeal and dmEnum.HealingDone or dmEnum.DamageDone
+    local ok, session = pcall(dm.GetCombatSessionFromType, sessionType, meterType)
+    local rawSources = (ok and type(session) == "table" and type(session.combatSources) == "table") and session.combatSources or nil
+
+    -- Sadece gruptaki oyuncularin verilerini filtrele
+    local sources = {}
+    if rawSources then
+        for idx = 1, #rawSources do
+            local s = rawSources[idx]
+            if s and IsUnitInPlayerGroup(s.name) then
+                table.insert(sources, s)
+            end
+        end
+    end
+
+    f.title:SetText(dungeonName or (isHeal and "Heal" or "Hasar"))
+
+    if #sources == 0 then
+        if db.threatOnlyInCombat and not ns:IsInCombat() then
+            f:Hide()
+            return
+        end
+        for i = 1, MAX_POOL_ROWS do rows[i]:Hide() end
+        f.emptyText:SetText(isHeal and "Grup heal verisi bekleniyor..." or "Grup hasar verisi bekleniyor...")
+        f.emptyText:Show()
+        f:Show()
+        return
+    end
+
+    f:Show()
+    f.emptyText:Hide()
+
+    local bodyH = f.body:GetHeight() or 120
+    local maxVisible = math.max(1, math.min(MAX_POOL_ROWS, math.floor((bodyH + ROW_GAP) / (ROW_HEIGHT + ROW_GAP))))
+    local maxAmt = (sources[1] and sources[1].totalAmount) or 1
+
+    for i = 1, MAX_POOL_ROWS do
+        local row = rows[i]
+        local src = (i <= maxVisible) and sources[i] or nil
+        if src then
+            row:ClearAllPoints()
+            row:SetPoint("TOPLEFT", f.body, "TOPLEFT", 0, -((i - 1) * (ROW_HEIGHT + ROW_GAP)))
+            row:SetPoint("TOPRIGHT", f.body, "TOPRIGHT", 0, -((i - 1) * (ROW_HEIGHT + ROW_GAP)))
+
+            -- Secret-safe bar degerleri dogrudan C++ StatusBar'a verilir
+            pcall(row.bar.SetMinMaxValues, row.bar, 0, maxAmt)
+            pcall(row.bar.SetValue, row.bar, src.totalAmount or 0)
+
+            local cr, cg, cb = GetClassColorByFilename(src.classFilename)
+            row.bar:SetStatusBarColor(cr, cg, cb, 0.84)
+
+            if IsReadable(src.name) and type(src.name) == "string" then
+                row.leftText:SetText(string.format("%d. %s", i, src.name))
+            elseif src.name ~= nil then
+                pcall(row.leftText.SetText, row.leftText, src.name)
+            else
+                row.leftText:SetText(tostring(i) .. ".")
+            end
+
+            local totStr = FormatMeterVal(src.totalAmount)
+            local psStr = FormatMeterVal(src.amountPerSecond)
+            local okFmt = pcall(row.rightText.SetFormattedText, row.rightText, "%s (%s/s)", totStr, psStr)
+            if not okFmt then
+                pcall(row.rightText.SetText, row.rightText, totStr)
+            end
+
+            local isSelf = (IsReadable(src.isLocalPlayer) and src.isLocalPlayer == true)
+            if isSelf then
+                row:SetBackdropBorderColor(1.0, 0.90, 0.35, 0.85)
+                row.leftText:SetTextColor(1.0, 0.96, 0.72)
+            else
+                row:SetBackdropBorderColor(1.0, 1.0, 1.0, 0.08)
+                row.leftText:SetTextColor(0.96, 0.98, 1.0)
+            end
+
+            row:Show()
+        else
+            row:Hide()
+        end
+    end
+end
+
 function ThreatMeter:Update()
     local db = ns.db or ns.DEFAULTS
     if not db.showThreatMeter then
@@ -637,12 +865,24 @@ function ThreatMeter:Update()
         return
     end
 
+    local inDungeon, dungeonName = GetDungeonInfo()
+    if not testMode and not inDungeon then
+        if mainFrame then mainFrame:Hide() end
+        return
+    end
+
     local f = EnsureMainFrame()
     f:SetBackdropColor(0.03, 0.05, 0.09, GetPanelAlpha())
 
+    local view = db.threatView or "damage"
+    if view == "damage" or view == "heal" then
+        RenderDamageMeter(f, view, dungeonName)
+        return
+    end
+
     if testMode then
         f:Show()
-        RenderEntries(f, "Test: Boss Ornegi", BuildTestEntries())
+        RenderEntries(f, "Test: Threat Ornegi", BuildTestEntries())
         return
     end
 
@@ -652,7 +892,8 @@ function ThreatMeter:Update()
             f:Hide()
         else
             f:Show()
-            RenderEntries(f, "Threat", {})
+            f.emptyText:SetText("Tehdit verisi bekleniyor...")
+            RenderEntries(f, dungeonName or "Threat", {})
         end
         return
     end
@@ -665,7 +906,7 @@ function ThreatMeter:Update()
 
     local mobName = GetUnitDisplayName(mob, false)
     f:Show()
-    RenderEntries(f, mobName, entries)
+    RenderEntries(f, (dungeonName and (dungeonName .. " - " .. mobName)) or mobName, entries)
 end
 
 local function StopRuntime()
@@ -696,6 +937,10 @@ local function StartRuntime()
     eventFrame:RegisterEvent("GROUP_ROSTER_UPDATE")
     eventFrame:RegisterEvent("PLAYER_REGEN_DISABLED")
     eventFrame:RegisterEvent("PLAYER_REGEN_ENABLED")
+    eventFrame:RegisterEvent("PLAYER_ENTERING_WORLD")
+    eventFrame:RegisterEvent("ZONE_CHANGED_NEW_AREA")
+    pcall(eventFrame.RegisterEvent, eventFrame, "DAMAGE_METER_COMBAT_SESSION_UPDATED")
+    pcall(eventFrame.RegisterEvent, eventFrame, "DAMAGE_METER_CURRENT_SESSION_UPDATED")
 
     if not updateTicker and _G.C_Timer and type(_G.C_Timer.NewTicker) == "function" then
         updateTicker = _G.C_Timer.NewTicker(UPDATE_INTERVAL, function()
@@ -718,6 +963,16 @@ function ThreatMeter:RefreshState()
     self:ApplyPosition()
     StartRuntime()
     self:Update()
+end
+
+function ThreatMeter:SetView(viewKey)
+    if not ns.db then return end
+    ns.db.showThreatMeter = true
+    ns.db.threatView = viewKey
+    self:RefreshState()
+    self:RefreshHeaderButtons()
+    self:Update()
+    ns:Print("Meter modu: " .. string.upper(viewKey))
 end
 
 function ThreatMeter:Toggle()

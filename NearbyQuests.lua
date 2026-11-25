@@ -107,22 +107,36 @@ function Nearby:ApplyPosition()
     self:SyncContentWidth()
 end
 
+local nearbyHovered = false
+
+local function ApplyNearbyBackdropAlpha()
+    if not nearbyFrame then
+        return
+    end
+    -- Oyun ici saydam HUD: normalde tamamen saydam (form gibi durmaz),
+    -- yalnizca fare uzerindeyken cok hafif cam golge gorunur
+    if nearbyHovered then
+        nearbyFrame:SetBackdropColor(0.03, 0.05, 0.09, 0.24)
+        nearbyFrame:SetBackdropBorderColor(1.0, 1.0, 1.0, 0.12)
+    else
+        nearbyFrame:SetBackdropColor(0.0, 0.0, 0.0, 0.0)
+        nearbyFrame:SetBackdropBorderColor(0.0, 0.0, 0.0, 0.0)
+    end
+end
+
 function Nearby:ApplyAppearance()
     if not nearbyFrame then
         return
     end
     local db = ns.db or ns.DEFAULTS
-    local pct = ns:IsSafeNumber(db.panelAlpha) and db.panelAlpha or 35
-    local a = math.max(0.05, math.min(0.95, pct / 100))
 
-    nearbyFrame:SetBackdropColor(0.03, 0.05, 0.09, a)
-    nearbyFrame:SetBackdropBorderColor(1.0, 1.0, 1.0, math.min(0.28, a * 0.45 + 0.06))
+    ApplyNearbyBackdropAlpha()
 
     if statusBarFrame and statusBarFrame.barBg then
-        statusBarFrame.barBg:SetColorTexture(0.02, 0.04, 0.08, a * 0.75)
+        statusBarFrame.barBg:SetColorTexture(0.0, 0.0, 0.0, 0.0)
     end
     if nearbyFrame.searchBg then
-        nearbyFrame.searchBg:SetColorTexture(0.02, 0.04, 0.08, a * 0.85)
+        nearbyFrame.searchBg:SetColorTexture(0.0, 0.0, 0.0, 0.14)
     end
 
     local isCollapsed = db.panelCollapsed and true or false
@@ -751,22 +765,33 @@ local function CreateNearbyFrame()
     f:SetSize(FRAME_WIDTH, HEADER_HEIGHT + STATUS_BAR_HEIGHT + 24)
     f:SetFrameStrata("MEDIUM")
     f:SetClampedToScreen(true)
-    -- Modern 1 px ince kenarlikli cam-transparan pencere
+    -- Oyun ici saydam HUD cercevesi (normalde kutu/kenarlik yok)
     f:SetBackdrop({
         bgFile = "Interface\\Buttons\\WHITE8X8",
         edgeFile = "Interface\\Buttons\\WHITE8X8",
         edgeSize = 1,
         insets = { left = 1, right = 1, top = 1, bottom = 1 },
     })
-    f:SetBackdropColor(0.03, 0.05, 0.09, 0.35)
-    f:SetBackdropBorderColor(1.0, 1.0, 1.0, 0.18)
+    f:SetBackdropColor(0.0, 0.0, 0.0, 0.0)
+    f:SetBackdropBorderColor(0.0, 0.0, 0.0, 0.0)
 
-    -- Ust baslik altinda ince 1 px ayirici cizgi
+    f:SetScript("OnEnter", function()
+        nearbyHovered = true
+        ApplyNearbyBackdropAlpha()
+    end)
+    f:SetScript("OnLeave", function()
+        if not (f:IsMouseOver()) then
+            nearbyHovered = false
+            ApplyNearbyBackdropAlpha()
+        end
+    end)
+
+    -- Ust baslik altinda zarif ince altin cizgi
     local headerSep = f:CreateTexture(nil, "ARTWORK")
     headerSep:SetHeight(1)
     headerSep:SetPoint("TOPLEFT", f, "TOPLEFT", 6, -(HEADER_HEIGHT))
     headerSep:SetPoint("TOPRIGHT", f, "TOPRIGHT", -6, -(HEADER_HEIGHT))
-    headerSep:SetColorTexture(1.0, 1.0, 1.0, 0.10)
+    headerSep:SetColorTexture(1.0, 0.86, 0.28, 0.28)
 
     f:RegisterForDrag("LeftButton")
     f:SetScript("OnDragStart", function(selfFrame)
@@ -798,7 +823,7 @@ local function CreateNearbyFrame()
     collapseBtn:SetPoint("TOPRIGHT", f, "TOPRIGHT", -7, -5)
     local colBg = collapseBtn:CreateTexture(nil, "BACKGROUND")
     colBg:SetAllPoints()
-    colBg:SetColorTexture(0.15, 0.22, 0.34, 0.72)
+    colBg:SetColorTexture(0.10, 0.16, 0.26, 0.28)
     local colHl = collapseBtn:CreateTexture(nil, "HIGHLIGHT")
     colHl:SetAllPoints()
     colHl:SetColorTexture(0.35, 0.65, 1.0, 0.30)
@@ -831,7 +856,7 @@ local function CreateNearbyFrame()
     nextBtn:SetPoint("RIGHT", collapseBtn, "LEFT", -4, 0)
     local nextBg = nextBtn:CreateTexture(nil, "BACKGROUND")
     nextBg:SetAllPoints()
-    nextBg:SetColorTexture(0.18, 0.42, 0.24, 0.88)
+    nextBg:SetColorTexture(0.14, 0.38, 0.22, 0.35)
     nextBtn.bg = nextBg
     local nextHl = nextBtn:CreateTexture(nil, "HIGHLIGHT")
     nextHl:SetAllPoints()
@@ -1733,7 +1758,7 @@ function Nearby:ScanOnce()
         hSlot:ClearAllPoints()
         hSlot:SetPoint("TOPLEFT", scrollChild, "TOPLEFT", 0, -yCursor)
         local alphaFactor = math.max(0.15, math.min(0.85, ((db.panelAlpha or 35) / 100) + 0.10))
-        hSlot.bg:SetColorTexture(sec.bgR, sec.bgG, sec.bgB, alphaFactor)
+        hSlot.bg:SetColorTexture(sec.bgR, sec.bgG, sec.bgB, 0.12)
         hSlot.highlightTex:SetAlpha(0.25)
         hSlot.goBtn:Hide()
         hSlot.titleText:ClearAllPoints()
@@ -1780,9 +1805,9 @@ function Nearby:ScanOnce()
                 local isActiveTarget = (ns.activeQuestID == item.questID)
                 local rowAlpha = math.max(0.12, math.min(0.70, ((db.panelAlpha or 35) / 100) * 0.70))
                 if isActiveTarget then
-                    rSlot.bg:SetColorTexture(0.10, 0.34, 0.20, math.min(0.75, rowAlpha + 0.25))
+                    rSlot.bg:SetColorTexture(0.10, 0.38, 0.22, 0.28)
                 else
-                    rSlot.bg:SetColorTexture(0.02, 0.04, 0.08, rowAlpha)
+                    rSlot.bg:SetColorTexture(0.0, 0.0, 0.0, 0.0)
                 end
                 rSlot.highlightTex:SetAlpha(1)
 

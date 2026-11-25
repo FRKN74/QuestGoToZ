@@ -402,7 +402,7 @@ local function CreateConfigFrame()
         function() return ns.db.showBanner end,
         function(v) ns.db.showBanner = v end
     )
-    CreateCheckbox(f, modBox, "Threat Meter", 206, -80,
+    CreateCheckbox(f, modBox, "Threat / DMG Meter", 206, -80,
         function() return ns.db.showThreatMeter end,
         function(v) ns.db.showThreatMeter = v end
     )
@@ -468,7 +468,7 @@ local function CreateConfigFrame()
     cmdInfo:SetPoint("TOPLEFT", cmdBox, "TOPLEFT", 12, -30)
     cmdInfo:SetWidth(382)
     cmdInfo:SetJustifyH("LEFT")
-    cmdInfo:SetText("/frkn gorev | /frkn grup | /frkn threat | /frkn threat test\n/frkn list | /frkn kart | /frkn lock | /frkn quiet | /frkn testdmg")
+    cmdInfo:SetText("/frkn gorev | /frkn grup | /frkn dmg | /frkn threat\n/frkn list | /frkn kart | /frkn lock | /frkn quiet | /frkn testdmg")
 
     -- =================================================================
     -- KATEGORI 2: Gorev & Harita
@@ -685,6 +685,10 @@ local function CreateConfigFrame()
         function() return ns.db.levelUpChecklist end,
         function(v) ns.db.levelUpChecklist = v end
     )
+    CreateCheckbox(f, bagBox, "AH Ekipman Ekrani (Minimap)", 206, -80,
+        function() return ns.db.showGearAdvisorBtn ~= false end,
+        function(v) ns.db.showGearAdvisorBtn = v end
+    )
 
     -- =================================================================
     -- KATEGORI 4: Ses & Puanlama
@@ -879,13 +883,25 @@ SlashCmdList["QUESTGOTOZ"] = function(msg)
         ns.db.enableQuestModule = not (ns.db.enableQuestModule ~= false)
         ns:FireCallback("CONFIG_CHANGED")
         ns:Print("Gorev Modulu: " .. (ns.db.enableQuestModule and "ACIK" or "KAPALI"))
-    elseif cmd == "threat test" or cmd == "tm test" then
+    elseif cmd == "threat test" or cmd == "tm test" or cmd == "dmg test" then
         if ns.ThreatMeter then
             ns.ThreatMeter:ToggleTest()
+        end
+    elseif cmd == "dmg" or cmd == "damage" or cmd == "dps" then
+        if ns.ThreatMeter then
+            ns.ThreatMeter:SetView("damage")
+        end
+    elseif cmd == "healmeter" or cmd == "hps" then
+        if ns.ThreatMeter then
+            ns.ThreatMeter:SetView("heal")
         end
     elseif cmd == "threat" or cmd == "tm" then
         if ns.ThreatMeter then
             ns.ThreatMeter:Toggle()
+        end
+    elseif cmd == "gear" or cmd == "ekipman" or cmd == "ah" then
+        if ns.GearAdvisor then
+            ns.GearAdvisor:Toggle()
         end
     else
         Config:Toggle()
