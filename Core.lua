@@ -1,7 +1,7 @@
 local addonName, ns = ...
 
 ns.name = addonName
-ns.version = "1.3.1"
+ns.version = "1.3.2"
 
 -- Varsayilan SavedVariables profil ayarlari
 ns.DEFAULTS = {
@@ -44,6 +44,7 @@ ns.DEFAULTS = {
     threatSource = "target",     -- "target" veya "focus"
     showPartyFrames = true,      -- Solda 5 kisilik grup cercevesi (Can/Mana/Lv/Heal)
     partyShowSolo = true,        -- Tek basina iken de grup cercevesini goster
+    partyShowPets = true,        -- Peti olanlarin pet can barini da goster (Healer)
     partyHealSpell = "",         -- Sag tik heal buyusu (bos = sinif varsayilani)
     partyShiftHealSpell = "",    -- Shift+Sol tik ikincil heal/dispel buyusu
     showQuestList = true,        -- Gorev penceresini goster/gizle
@@ -598,7 +599,7 @@ eventFrame:SetScript("OnEvent", function(_, event, ...)
         end
     elseif event == "PLAYER_LOGIN" then
         ns:FireCallback("PLAYER_LOGIN")
-        ns:Print("Yuklendi (v" .. ns.version .. "). Ayarlar icin: |cffffff00/qgt|r")
+        ns:Print("Yuklendi (v" .. ns.version .. "). Ayarlar icin: |cffffff00/frkn|r")
     elseif event == "PLAYER_REGEN_ENABLED" then
         -- Combat bittiginde ertelenen UI guncellemelerini calistir
         local queue = pendingCombatActions

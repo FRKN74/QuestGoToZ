@@ -11,6 +11,8 @@ local UNIT_GAP = 4
 local MIN_WIDTH, MAX_WIDTH = 140, 360
 local MIN_UNIT_H, MAX_UNIT_H = 28, 72
 local UNITS = { "player", "party1", "party2", "party3", "party4" }
+local PET_UNITS = { "pet", "partypet1", "partypet2", "partypet3", "partypet4" }
+local PET_GAP = 2
 
 local DEFAULT_HEAL_BY_CLASS = {
     PRIEST  = "Flash Heal",
@@ -31,9 +33,28 @@ local POWER_COLORS = {
 
 local containerFrame = nil
 local unitButtons = {}
+local petButtons = {}
 local updateTicker = nil
 local currentVisibleCount = 1
+local currentVisiblePets = 0
 local isResizing = false
+
+local function GetPetHeight(uh)
+    return math.max(15, math.min(26, math.floor(uh * 0.46)))
+end
+
+local function ApplyPetDimensions(pBtn, w, uh)
+    if not pBtn then return end
+    local ph = GetPetHeight(uh)
+    pBtn:SetSize(w - 16, ph)
+    local fontSize = math.max(9, math.min(13, math.floor(ph * 0.56)))
+    if pBtn.nameText then
+        pBtn.nameText:SetFont("Fonts\\ARIALN.TTF", fontSize, "")
+    end
+    if pBtn.hpText then
+        pBtn.hpText:SetFont("Fonts\\ARIALN.TTF", fontSize, "")
+    end
+end
 
 local function GetPartyDimensions()
     local db = ns.db or ns.DEFAULTS
@@ -336,6 +357,136 @@ local function CreateUnitButton(parent, unit, index)
     return btn
 end
 
+-- Petler icin ince, tiklanabilir (Sol=Hedef, Sag=Heal, Shift+Sol=Ikincil) can bari
+local function CreatePetButton(parent, petUnit, index)
+    local btn = CreateFrame("Button", "QuestGoToZPartyPet" .. index, parent, "SecureUnitButtonTemplate,BackdropTemplate")
+    btn:SetSize(FRAME_WIDTH - 16, GetPetHeight(UNIT_HEIGHT))
+    btn:RegisterForClicks("AnyUp")
+    btn:SetAttribute("unit", petUnit)
+    btn:SetAttribute("type1", "target")
+
+    btn:SetBackdrop({
+        bgFile = "Interface\\Buttons\\WHITE8X8",
+        edgeFile = "Interface\\Buttons\\WHITE8X8",
+        edgeSize = 1,
+        insets = { left = 1, right = 1, top = 1, bottom = 1 },
+    })
+    btn:SetBackdropColor(0.03, 0.05, 0.09, 0.55)
+    btn:SetBackdropBorderColor(0.35, 0.85, 0.65, 0.24)
+
+    -- Secili (target) pet icin 2 px parlak YESIL cerceve
+    local selBorder = CreateFrame("Frame", nil, btn)
+    selBorder:SetAllPoints(btn)
+    selBorder:SetFrameLevel((btn:GetFrameLevel() or 1) + 5)
+    selBorder:EnableMouse(false)
+    local t = 2
+    local sr, sg, sb, sa = 0.20, 1.0, 0.38, 1.0
+    local sTop = selBorder:CreateTexture(nil, "OVERLAY")
+    sTop:SetPoint("TOPLEFT", selBorder, "TOPLEFT", 0, 0)
+    sTop:SetPoint("TOPRIGHT", selBorder, "TOPRIGHT", 0, 0)
+    sTop:SetHeight(t)
+    sTop:SetColorTexture(sr, sg, sb, sa)
+    local sBot = selBorder:CreateTexture(nil, "OVERLAY")
+    sBot:SetPoint("BOTTOMLEFT", selBorder, "BOTTOMLEFT", 0, 0)
+    sBot:SetPoint("BOTTOMRIGHT", selBorder, "BOTTOMRIGHT", 0, 0)
+    sBot:SetHeight(t)
+    sBot:SetColorTexture(sr, sg, sb, sa)
+    local sLeft = selBorder:CreateTexture(nil, "OVERLAY")
+    sLeft:SetPoint("TOPLEFT", selBorder, "TOPLEFT", 0, -t)
+    sLeft:SetPoint("BOTTOMLEFT", selBorder, "BOTTOMLEFT", 0, t)
+    sLeft:SetWidth(t)
+    sLeft:SetColorTexture(sr, sg, sb, sa)
+    local sRight = selBorder:CreateTexture(nil, "OVERLAY")
+    sRight:SetPoint("TOPRIGHT", selBorder, "TOPRIGHT", 0, -t)
+    sRight:SetPoint("BOTTOMRIGHT", selBorder, "BOTTOMRIGHT", 0, t)
+    sRight:SetWidth(t)
+    sRight:SetColorTexture(sr, sg, sb, sa)
+    selBorder:Hide()
+    btn.selBorder = selBorder
+
+    -- Dusuk can (<%40) pet icin kirmizi yanip sonen uyari
+    local lowHpHolder = CreateFrame("Frame", nil, btn)
+    lowHpHolder:SetAllPoints(btn)
+    lowHpHolder:SetFrameLevel((btn:GetFrameLevel() or 1) + 4)
+    lowHpHolder:EnableMouse(false)
+
+    local lowBg = lowHpHolder:CreateTexture(nil, "OVERLAY")
+    lowBg:SetAllPoints(lowHpHolder)
+    lowBg:SetColorTexture(1.0, 0.08, 0.08, 0.45)
+
+    local lowAnim = lowBg:CreateAnimationGroup()
+    lowAnim:SetLooping("REPEAT")
+    local a1 = lowAnim:CreateAnimation("Alpha")
+    a1:SetFromAlpha(0.10)
+    a1:SetToAlpha(0.85)
+    a1:SetDuration(0.40)
+    a1:SetOrder(1)
+    local a2 = lowAnim:CreateAnimation("Alpha")
+    a2:SetFromAlpha(0.85)
+    a2:SetToAlpha(0.10)
+    a2:SetDuration(0.40)
+    a2:SetOrder(2)
+    lowAnim:Play()
+
+    lowHpHolder:Hide()
+    btn.lowHpHolder = lowHpHolder
+
+    local hpBar = CreateFrame("StatusBar", nil, btn)
+    hpBar:SetPoint("TOPLEFT", btn, "TOPLEFT", 1, -1)
+    hpBar:SetPoint("BOTTOMRIGHT", btn, "BOTTOMRIGHT", -1, 1)
+    hpBar:SetStatusBarTexture("Interface\\TargetingFrame\\UI-StatusBar")
+    hpBar:SetStatusBarColor(0.18, 0.76, 0.54, 0.88)
+    hpBar:SetMinMaxValues(0, 1)
+    hpBar:SetValue(1)
+
+    local hpBg = hpBar:CreateTexture(nil, "BACKGROUND")
+    hpBg:SetAllPoints()
+    hpBg:SetColorTexture(0.05, 0.08, 0.11, 0.72)
+
+    local nameText = hpBar:CreateFontString(nil, "OVERLAY")
+    nameText:SetFont("Fonts\\ARIALN.TTF", 10, "")
+    nameText:SetShadowColor(0, 0, 0, 1.0)
+    nameText:SetShadowOffset(1, -1)
+    nameText:SetPoint("LEFT", hpBar, "LEFT", 4, 0)
+    nameText:SetPoint("RIGHT", hpBar, "RIGHT", -36, 0)
+    nameText:SetJustifyH("LEFT")
+    nameText:SetWordWrap(false)
+    btn.nameText = nameText
+
+    local hpText = hpBar:CreateFontString(nil, "OVERLAY")
+    hpText:SetFont("Fonts\\ARIALN.TTF", 9, "")
+    hpText:SetShadowColor(0, 0, 0, 1.0)
+    hpText:SetShadowOffset(1, -1)
+    hpText:SetPoint("RIGHT", hpBar, "RIGHT", -4, 0)
+    hpText:SetJustifyH("RIGHT")
+    btn.hpText = hpText
+    btn.hpBar = hpBar
+
+    local hl = btn:CreateTexture(nil, "HIGHLIGHT")
+    hl:SetAllPoints()
+    hl:SetColorTexture(1, 1, 1, 0.12)
+
+    btn:SetScript("OnEnter", function(selfBtn)
+        if not GameTooltip then return end
+        GameTooltip:SetOwner(selfBtn, "ANCHOR_RIGHT")
+        local okN, pName = ns:SafeGlobal("UnitName", petUnit)
+        GameTooltip:SetText("Pet: " .. ((okN and ns:IsSafeString(pName)) and pName or petUnit), 0.35, 0.95, 0.65)
+        GameTooltip:AddLine("Sol tik: Peti hedef al", 0.85, 0.88, 0.94)
+        local heal = PartyFrames:GetActiveHealSpell()
+        if heal ~= "" then
+            GameTooltip:AddLine("Sag tik: " .. heal, 0.30, 1.0, 0.45)
+        end
+        GameTooltip:Show()
+    end)
+    btn:SetScript("OnLeave", function()
+        if GameTooltip then GameTooltip:Hide() end
+    end)
+
+    btn.unit = petUnit
+    btn:Hide()
+    return btn
+end
+
 local function CreatePartyContainer()
     if containerFrame then
         return containerFrame
@@ -378,29 +529,42 @@ local function CreatePartyContainer()
         SavePosition(selfFrame)
     end)
 
-    -- Canli boyutlandirma: suruklerken tum uye kartlari anlik buyuyup kuculur
+    -- Canli boyutlandirma: suruklerken tum uye ve pet kartlari anlik buyuyup kuculur
     f:SetScript("OnSizeChanged", function(selfFrame, newW, newH)
         if not isResizing or ns:IsInCombat() then
             return
         end
         local cnt = math.max(1, currentVisibleCount)
+        local pCnt = currentVisiblePets or 0
         local w = math.max(MIN_WIDTH, math.min(MAX_WIDTH, math.floor((newW or FRAME_WIDTH) + 0.5)))
-        local availH = (newH or 50) - TOP_PADDING - BOTTOM_RESIZE_PAD - (cnt - 1) * UNIT_GAP
-        local uh = math.max(MIN_UNIT_H, math.min(MAX_UNIT_H, math.floor((availH / cnt) + 0.5)))
-        local shownIdx = 0
-        for i = 1, #unitButtons do
+        local effUnits = cnt + pCnt * 0.46
+        local availH = (newH or 50) - TOP_PADDING - BOTTOM_RESIZE_PAD - math.max(0, cnt - 1) * UNIT_GAP - pCnt * PET_GAP
+        local uh = math.max(MIN_UNIT_H, math.min(MAX_UNIT_H, math.floor((availH / effUnits) + 0.5)))
+        local ph = GetPetHeight(uh)
+        local curY = TOP_PADDING
+        for i = 1, #UNITS do
             local btn = unitButtons[i]
             if btn and btn:IsShown() then
-                shownIdx = shownIdx + 1
                 ApplyButtonDimensions(btn, w, uh)
                 btn:ClearAllPoints()
-                btn:SetPoint("TOPLEFT", selfFrame, "TOPLEFT", 5, -(TOP_PADDING + (shownIdx - 1) * (uh + UNIT_GAP)))
+                btn:SetPoint("TOPLEFT", selfFrame, "TOPLEFT", 5, -curY)
+                curY = curY + uh
+                local pBtn = petButtons[i]
+                if pBtn and pBtn:IsShown() then
+                    curY = curY + PET_GAP
+                    ApplyPetDimensions(pBtn, w, uh)
+                    pBtn:ClearAllPoints()
+                    pBtn:SetPoint("TOPLEFT", selfFrame, "TOPLEFT", 11, -curY)
+                    curY = curY + ph
+                end
+                curY = curY + UNIT_GAP
             end
         end
     end)
 
     for i = 1, #UNITS do
         unitButtons[i] = CreateUnitButton(f, UNITS[i], i)
+        petButtons[i] = CreatePetButton(f, PET_UNITS[i], i)
     end
 
     -- Sag-alt yeniden boyutlandirma tutamaci (Gorev listesi ile ayni)
@@ -424,9 +588,11 @@ local function CreatePartyContainer()
         if ns:IsInCombat() then return end
         local newW, newH = f:GetSize()
         local cnt = math.max(1, currentVisibleCount)
+        local pCnt = currentVisiblePets or 0
+        local effUnits = cnt + pCnt * 0.46
         local w = math.max(MIN_WIDTH, math.min(MAX_WIDTH, math.floor((newW or FRAME_WIDTH) + 0.5)))
-        local availH = (newH or 50) - TOP_PADDING - BOTTOM_RESIZE_PAD - (cnt - 1) * UNIT_GAP
-        local uh = math.max(MIN_UNIT_H, math.min(MAX_UNIT_H, math.floor((availH / cnt) + 0.5)))
+        local availH = (newH or 50) - TOP_PADDING - BOTTOM_RESIZE_PAD - math.max(0, cnt - 1) * UNIT_GAP - pCnt * PET_GAP
+        local uh = math.max(MIN_UNIT_H, math.min(MAX_UNIT_H, math.floor((availH / effUnits) + 0.5)))
         if ns.db then
             ns.db.partySize = { width = w, unitHeight = uh }
         end
@@ -463,14 +629,23 @@ function PartyFrames:RebuildLayout()
 
         local healSpell = PartyFrames:GetActiveHealSpell()
         local shiftSpell = PartyFrames:GetShiftHealSpell()
+        local showPets = (db.partyShowPets ~= false)
         local w, uh = GetPartyDimensions()
+        local ph = GetPetHeight(uh)
         local visibleCount = 0
+        local visiblePets = 0
+        local curY = TOP_PADDING
 
         for i = 1, #UNITS do
             local unit = UNITS[i]
             local btn = unitButtons[i]
+            local pBtn = petButtons[i]
+            local petUnit = PET_UNITS[i]
             local okEx, exists = ns:SafeGlobal("UnitExists", unit)
             if okEx and ns:IsSafeBoolean(exists) and exists then
+                if visibleCount > 0 then
+                    curY = curY + UNIT_GAP
+                end
                 visibleCount = visibleCount + 1
                 btn:SetAttribute("unit", unit)
                 btn:SetAttribute("type1", "target")
@@ -490,16 +665,48 @@ function PartyFrames:RebuildLayout()
                 end
                 ApplyButtonDimensions(btn, w, uh)
                 btn:ClearAllPoints()
-                btn:SetPoint("TOPLEFT", containerFrame, "TOPLEFT", 5, -(TOP_PADDING + (visibleCount - 1) * (uh + UNIT_GAP)))
+                btn:SetPoint("TOPLEFT", containerFrame, "TOPLEFT", 5, -curY)
                 btn:Show()
+                curY = curY + uh
+
+                local okPetEx, petExists = ns:SafeGlobal("UnitExists", petUnit)
+                if showPets and pBtn and okPetEx and ns:IsSafeBoolean(petExists) and petExists then
+                    visiblePets = visiblePets + 1
+                    curY = curY + PET_GAP
+                    pBtn:SetAttribute("unit", petUnit)
+                    pBtn:SetAttribute("type1", "target")
+                    if healSpell ~= "" then
+                        pBtn:SetAttribute("type2", "spell")
+                        pBtn:SetAttribute("spell2", healSpell)
+                    else
+                        pBtn:SetAttribute("type2", nil)
+                        pBtn:SetAttribute("spell2", nil)
+                    end
+                    if shiftSpell ~= "" then
+                        pBtn:SetAttribute("shift-type1", "spell")
+                        pBtn:SetAttribute("shift-spell1", shiftSpell)
+                    else
+                        pBtn:SetAttribute("shift-type1", nil)
+                        pBtn:SetAttribute("shift-spell1", nil)
+                    end
+                    ApplyPetDimensions(pBtn, w, uh)
+                    pBtn:ClearAllPoints()
+                    pBtn:SetPoint("TOPLEFT", containerFrame, "TOPLEFT", 11, -curY)
+                    pBtn:Show()
+                    curY = curY + ph
+                elseif pBtn then
+                    pBtn:Hide()
+                end
             else
                 btn:Hide()
+                if pBtn then pBtn:Hide() end
             end
         end
 
         local count = math.max(1, visibleCount)
         currentVisibleCount = count
-        local h = TOP_PADDING + BOTTOM_RESIZE_PAD + count * uh + (count - 1) * UNIT_GAP
+        currentVisiblePets = visiblePets
+        local h = math.max(TOP_PADDING + BOTTOM_RESIZE_PAD + uh, curY + BOTTOM_RESIZE_PAD)
         containerFrame:SetSize(w, h)
         containerFrame:Show()
         PartyFrames:ApplyAppearance()
@@ -641,6 +848,102 @@ function PartyFrames:UpdateBars()
             end
         end
     end
+
+    -- Pet can barlari (Midnight secret-safe)
+    for i = 1, #petButtons do
+        local pBtn = petButtons[i]
+        if pBtn and pBtn:IsShown() then
+            local pUnit = pBtn.unit
+            local okEx, exists = ns:SafeGlobal("UnitExists", pUnit)
+            if okEx and ns:IsSafeBoolean(exists) and exists then
+                local okName, pName = ns:SafeGlobal("UnitName", pUnit)
+                local safeName = (okName and ns:IsSafeString(pName)) and pName or "Pet"
+                pBtn.nameText:SetText("|cff88e6c2Pet:|r " .. safeName)
+
+                local okDead, isDead = ns:SafeGlobal("UnitIsDeadOrGhost", pUnit)
+                local deadSafe = (okDead and ns:IsSafeBoolean(isDead) and isDead) or false
+
+                if deadSafe then
+                    pcall(pBtn.hpBar.SetMinMaxValues, pBtn.hpBar, 0, 1)
+                    pcall(pBtn.hpBar.SetValue, pBtn.hpBar, 0)
+                    pBtn.hpText:SetText("|cffff4444OLU|r")
+                    if pBtn.lowHpHolder then pBtn.lowHpHolder:Hide() end
+                else
+                    local okMaxHp, maxHp = ns:SafeGlobal("UnitHealthMax", pUnit)
+                    local okHp, hp = ns:SafeGlobal("UnitHealth", pUnit)
+                    if okMaxHp and okHp and maxHp ~= nil and hp ~= nil then
+                        pcall(pBtn.hpBar.SetMinMaxValues, pBtn.hpBar, 0, maxHp)
+                        pcall(pBtn.hpBar.SetValue, pBtn.hpBar, hp)
+                    end
+
+                    if pBtn.lowHpHolder then
+                        if ns:IsSafeNumber(hp) and ns:IsSafeNumber(maxHp) and maxHp > 0 then
+                            if (hp / maxHp) < 0.40 then
+                                pBtn.lowHpHolder:SetAlpha(1.0)
+                                pBtn.lowHpHolder:Show()
+                            else
+                                pBtn.lowHpHolder:Hide()
+                            end
+                        elseif type(_G.UnitHealthPercent) == "function" then
+                            local curve = GetLowHpCurve()
+                            if curve then
+                                local okC, alphaVal = pcall(_G.UnitHealthPercent, pUnit, true, curve)
+                                if okC and alphaVal ~= nil then
+                                    pBtn.lowHpHolder:Show()
+                                    pcall(pBtn.lowHpHolder.SetAlpha, pBtn.lowHpHolder, alphaVal)
+                                else
+                                    pBtn.lowHpHolder:Hide()
+                                end
+                            else
+                                pBtn.lowHpHolder:Hide()
+                            end
+                        else
+                            pBtn.lowHpHolder:Hide()
+                        end
+                    end
+
+                    local pctSet = false
+                    if type(_G.UnitHealthPercent) == "function" then
+                        local scaleCurve = _G.CurveConstants and _G.CurveConstants.ScaleTo100
+                        local okP, pctVal = pcall(_G.UnitHealthPercent, pUnit, true, scaleCurve)
+                        if okP and pctVal ~= nil then
+                            local okFmt = pcall(pBtn.hpText.SetFormattedText, pBtn.hpText, "%.0f%%", pctVal)
+                            if okFmt then pctSet = true end
+                        end
+                    end
+                    if not pctSet then
+                        if ns:IsSafeNumber(hp) and ns:IsSafeNumber(maxHp) and maxHp > 0 then
+                            pBtn.hpText:SetText(string.format("%d%%", math.floor((hp / maxHp) * 100 + 0.5)))
+                        else
+                            pBtn.hpText:SetText("")
+                        end
+                    end
+                end
+
+                if pBtn.selBorder then
+                    local okT, isTarget = ns:SafeGlobal("UnitIsUnit", pUnit, "target")
+                    if okT and ns:IsSafeBoolean(isTarget) and isTarget then
+                        pBtn.selBorder:Show()
+                    else
+                        pBtn.selBorder:Hide()
+                    end
+                end
+
+                if pUnit ~= "pet" then
+                    local okRng, inRange = ns:SafeGlobal("UnitInRange", pUnit)
+                    if okRng and type(pBtn.SetAlphaFromBoolean) == "function" and (IsSecret(inRange) or inRange ~= nil) then
+                        pcall(pBtn.SetAlphaFromBoolean, pBtn, inRange, 1.0, 0.45)
+                    elseif okRng and ns:IsSafeBoolean(inRange) then
+                        pBtn:SetAlpha(inRange and 1.0 or 0.45)
+                    else
+                        pBtn:SetAlpha(1.0)
+                    end
+                else
+                    pBtn:SetAlpha(1.0)
+                end
+            end
+        end
+    end
 end
 
 function PartyFrames:Toggle()
@@ -655,6 +958,7 @@ end
 
 local partyEventFrame = CreateFrame("Frame", "QuestGoToZPartyEventFrame")
 partyEventFrame:RegisterEvent("GROUP_ROSTER_UPDATE")
+partyEventFrame:RegisterEvent("UNIT_PET")
 partyEventFrame:RegisterEvent("UNIT_HEALTH")
 partyEventFrame:RegisterEvent("UNIT_MAXHEALTH")
 partyEventFrame:RegisterEvent("UNIT_POWER_UPDATE")
@@ -665,7 +969,7 @@ partyEventFrame:RegisterEvent("UNIT_LEVEL")
 partyEventFrame:RegisterEvent("PLAYER_ROLES_ASSIGNED")
 partyEventFrame:RegisterEvent("PLAYER_TARGET_CHANGED")
 partyEventFrame:SetScript("OnEvent", function(_, event)
-    if event == "GROUP_ROSTER_UPDATE" then
+    if event == "GROUP_ROSTER_UPDATE" or event == "UNIT_PET" then
         PartyFrames:RebuildLayout()
     else
         pcall(PartyFrames.UpdateBars, PartyFrames)

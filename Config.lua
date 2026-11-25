@@ -468,7 +468,7 @@ local function CreateConfigFrame()
     cmdInfo:SetPoint("TOPLEFT", cmdBox, "TOPLEFT", 12, -30)
     cmdInfo:SetWidth(382)
     cmdInfo:SetJustifyH("LEFT")
-    cmdInfo:SetText("/qgt gorev | /qgt grup | /qgt threat | /qgt threat test\n/qgt list | /qgt kart | /qgt lock | /qgt quiet | /qgt testdmg")
+    cmdInfo:SetText("/frkn gorev | /frkn grup | /frkn threat | /frkn threat test\n/frkn list | /frkn kart | /frkn lock | /frkn quiet | /frkn testdmg")
 
     -- =================================================================
     -- KATEGORI 2: Gorev & Harita
@@ -587,6 +587,10 @@ local function CreateConfigFrame()
     CreateCheckbox(f, partyBox, "Parti gorev senkronu", 10, -54,
         function() return ns.db.partySync end,
         function(v) ns.db.partySync = v end
+    )
+    CreateCheckbox(f, partyBox, "Pet canlarini goster (Healer)", 206, -54,
+        function() return ns.db.partyShowPets ~= false end,
+        function(v) ns.db.partyShowPets = v end
     )
 
     local healLbl = partyBox:CreateFontString(nil, "OVERLAY")
@@ -825,8 +829,8 @@ function Config:Toggle()
     end
 end
 
--- /qgt slash komutu
-SLASH_QUESTGOTOZ1 = "/qgt"
+-- /frkn slash komutu
+SLASH_QUESTGOTOZ1 = "/frkn"
 SlashCmdList["QUESTGOTOZ"] = function(msg)
     local cmd = string.lower(strtrim and strtrim(msg or "") or (msg or ""):match("^%s*(.-)%s*$"))
     if cmd == "clear" or cmd == "temizle" then

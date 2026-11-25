@@ -8,6 +8,91 @@ local pool = {}
 local nextIndex = 1
 local playerGUID = nil
 local lastCLEUIncomingTime = 0
+local lastCLEUHealTime = 0
+local origHitPoints = setmetatable({}, { __mode = "k" })
+local hookedHitObjs = setmetatable({}, { __mode = "k" })
+local repositioningHit = false
+
+-- Blizzard'in sol ustteki karakter portresi uzerindeki hasar/can gostergesini
+-- gizlemek yerine ekranin ortasindaki karakterin ALTINA tasi (Midnight %100 secret-safe!)
+local function GetPortraitHitTargets()
+    local list = {}
+    local pf = _G.PlayerFrame
+    if type(pf) == "table" then
+        local content = pf.PlayerFrameContent
+        local main = content and content.PlayerFrameContentMain
+        local hitInd = main and main.HitIndicator
+        if hitInd then
+            table.insert(list, hitInd)
+            if hitInd.HitText then
+                table.insert(list, hitInd.HitText)
+            end
+        end
+    end
+    if _G.PlayerHitIndicator then
+        local dup = false
+        for i = 1, #list do
+            if list[i] == _G.PlayerHitIndicator then dup = true; break end
+        end
+        if not dup then
+            table.insert(list, _G.PlayerHitIndicator)
+        end
+    end
+    return list
+end
+
+local function ApplyPortraitHitIndicatorState()
+    if ns:IsInCombat() then
+        ns:RunOutOfCombat("combattext_hit_pos", ApplyPortraitHitIndicatorState)
+        return
+    end
+
+    local db = ns.db or ns.DEFAULTS
+    local moveUnderChar = (db and db.showCombatText) and true or false
+    local targets = GetPortraitHitTargets()
+
+    repositioningHit = true
+    for i = 1, #targets do
+        local obj = targets[i]
+        if type(obj) == "table" then
+            if type(obj.SetAlpha) == "function" then
+                pcall(obj.SetAlpha, obj, 1)
+            end
+            if not origHitPoints[obj] and type(obj.GetPoint) == "function" then
+                local okP, p, rel, rp, x, y = pcall(obj.GetPoint, obj, 1)
+                if okP and p then
+                    origHitPoints[obj] = { p, rel, rp, x or 0, y or 0 }
+                end
+            end
+
+            if moveUnderChar then
+                if type(obj.ClearAllPoints) == "function" and type(obj.SetPoint) == "function" then
+                    pcall(obj.ClearAllPoints, obj)
+                    pcall(obj.SetPoint, obj, "CENTER", UIParent, "CENTER", 0, -105)
+                end
+                if not hookedHitObjs[obj] and type(obj.SetPoint) == "function" then
+                    hookedHitObjs[obj] = true
+                    hooksecurefunc(obj, "SetPoint", function(selfObj)
+                        if repositioningHit or ns:IsInCombat() then return end
+                        local curDb = ns.db or ns.DEFAULTS
+                        if not (curDb and curDb.showCombatText) then return end
+                        repositioningHit = true
+                        pcall(selfObj.ClearAllPoints, selfObj)
+                        pcall(selfObj.SetPoint, selfObj, "CENTER", UIParent, "CENTER", 0, -105)
+                        repositioningHit = false
+                    end)
+                end
+            else
+                local orig = origHitPoints[obj]
+                if orig and type(obj.ClearAllPoints) == "function" and type(obj.SetPoint) == "function" then
+                    pcall(obj.ClearAllPoints, obj)
+                    pcall(obj.SetPoint, obj, orig[1], orig[2], orig[3], orig[4], orig[5])
+                end
+            end
+        end
+    end
+    repositioningHit = false
+end
 
 local CRIT_ICON_TEX = "Interface\\Icons\\Ability_CriticalStrike"
 local INCOMING_CRIT_ICON_TEX = "Interface\\Icons\\Ability_Warrior_Rampage"
@@ -116,7 +201,7 @@ local function InitPool()
     end
 end
 
--- kind: "normal" | "crit" | "incoming" | "incoming_crit"
+-- kind: "normal" | "crit" | "incoming" | "incoming_crit" | "heal" | "heal_crit"
 function CombatText:Spawn(amount, kind)
     local db = ns.db or ns.DEFAULTS
     if not db.showCombatText then
@@ -155,13 +240,13 @@ function CombatText:Spawn(amount, kind)
         slot.fadeOut:SetStartDelay(0.75)
         slot.fadeOut:SetDuration(0.43)
     elseif kind == "incoming" or kind == "incoming_crit" then
-        -- Alinan hasar: sol tarafta KIRMIZI
+        -- Alinan hasar: ekranin ortasindaki karakterin altinda (hafif sol) KIRMIZI
         local isCritIn = (kind == "incoming_crit")
-        local rx = math.random(-145, -75)
-        local ry = math.random(-10, 45)
+        local rx = math.random(-72, -16)
+        local ry = math.random(-118, -82)
         slot:SetPoint("CENTER", UIParent, "CENTER", rx, ry)
-        slot.text:SetFont("Fonts\\FRIZQT__.TTF", isCritIn and 27 or 21, "THICKOUTLINE")
-        slot.text:SetTextColor(1.0, 0.16, 0.16)
+        slot.text:SetFont("Fonts\\FRIZQT__.TTF", isCritIn and 26 or 20, "THICKOUTLINE")
+        slot.text:SetTextColor(1.0, 0.18, 0.18)
         slot.text:SetText("-" .. formatted .. (isCritIn and "!" or ""))
         if isCritIn then
             slot.icon:SetTexture(INCOMING_CRIT_ICON_TEX)
@@ -173,7 +258,22 @@ function CombatText:Spawn(amount, kind)
             slot.icon:Hide()
         end
         slot.move:SetDuration(0.95)
-        slot.move:SetOffset(math.random(-22, -6), -75)
+        slot.move:SetOffset(math.random(-14, -2), -56)
+        slot.fadeOut:SetStartDelay(0.55)
+        slot.fadeOut:SetDuration(0.40)
+    elseif kind == "heal" or kind == "heal_crit" then
+        -- Alinan can (heal): ekranin ortasindaki karakterin altinda (hafif sag) YESIL
+        local isCritHeal = (kind == "heal_crit")
+        local rx = math.random(16, 72)
+        local ry = math.random(-118, -82)
+        slot:SetPoint("CENTER", UIParent, "CENTER", rx, ry)
+        slot.text:SetFont("Fonts\\FRIZQT__.TTF", isCritHeal and 25 or 19, "THICKOUTLINE")
+        slot.text:SetTextColor(0.22, 0.96, 0.42)
+        slot.text:SetText("+" .. formatted .. (isCritHeal and "!" or ""))
+        slot.iconGlow:Hide()
+        slot.icon:Hide()
+        slot.move:SetDuration(0.95)
+        slot.move:SetOffset(math.random(2, 14), -48)
         slot.fadeOut:SetStartDelay(0.55)
         slot.fadeOut:SetDuration(0.40)
     else
@@ -225,6 +325,13 @@ local function OnCombatLogEvent()
         or subevent == "SPELL_PERIODIC_DAMAGE" or subevent == "DAMAGE_SHIELD" then
         amount = arg15
         isCrit = (arg21 == true)
+    elseif subevent == "SPELL_HEAL" or subevent == "SPELL_PERIODIC_HEAL" then
+        -- Alinan can (heal): sadece oyuncuya gelen iyilestirme
+        if ns:IsSafeString(destGUID) and destGUID == playerGUID and ns:IsSafeNumber(arg15) and arg15 > 0 then
+            lastCLEUHealTime = (type(GetTime) == "function") and GetTime() or 0
+            CombatText:Spawn(arg15, (arg18 == true) and "heal_crit" or "heal")
+        end
+        return
     else
         return
     end
@@ -254,24 +361,32 @@ local function OnCombatLogEvent()
     end
 end
 
--- Yedek alinan hasar yakalayici (CLEU gelmezse UNIT_COMBAT ile kirmizi hasar gosterir)
+-- Yedek alinan hasar ve can yakalayici (CLEU gelmezse UNIT_COMBAT ile gosterir)
 local function OnUnitCombat(unit, action, descriptor, amount)
     local db = ns.db or ns.DEFAULTS
-    if not db.showCombatText or unit ~= "player" or action ~= "WOUND" then
-        return
-    end
-    local now = (type(GetTime) == "function") and GetTime() or 0
-    if (now - lastCLEUIncomingTime) < 0.08 then
+    if not db.showCombatText or unit ~= "player" then
         return
     end
     if not ns:IsSafeNumber(amount) or amount <= 0 then
         return
     end
+    local now = (type(GetTime) == "function") and GetTime() or 0
     local isCrit = (ns:IsSafeString(descriptor) and descriptor == "CRITICAL")
-    CombatText:Spawn(amount, isCrit and "incoming_crit" or "incoming")
+
+    if action == "WOUND" then
+        if (now - lastCLEUIncomingTime) < 0.08 then
+            return
+        end
+        CombatText:Spawn(amount, isCrit and "incoming_crit" or "incoming")
+    elseif action == "HEAL" then
+        if (now - lastCLEUHealTime) < 0.08 then
+            return
+        end
+        CombatText:Spawn(amount, isCrit and "heal_crit" or "heal")
+    end
 end
 
--- /qgt testdmg ile savas disinda hemen onizleme yapma
+-- /frkn testdmg ile savas disinda hemen onizleme yapma
 function CombatText:RunTest()
     self:Spawn(1245, "normal")
     ns:TrySafeC("C_Timer", "After", 0.25, function()
@@ -280,26 +395,40 @@ function CombatText:RunTest()
     ns:TrySafeC("C_Timer", "After", 0.50, function()
         CombatText:Spawn(640, "incoming")
     end)
-    ns:TrySafeC("C_Timer", "After", 0.80, function()
+    ns:TrySafeC("C_Timer", "After", 0.70, function()
+        CombatText:Spawn(950, "heal")
+    end)
+    ns:TrySafeC("C_Timer", "After", 0.95, function()
         CombatText:Spawn(1520, "incoming_crit")
+    end)
+    ns:TrySafeC("C_Timer", "After", 1.15, function()
+        CombatText:Spawn(2150, "heal_crit")
     end)
 end
 
 local combatEventFrame = CreateFrame("Frame", "QuestGoToZCombatTextEventFrame")
 combatEventFrame:RegisterEvent("COMBAT_LOG_EVENT_UNFILTERED")
 combatEventFrame:RegisterEvent("UNIT_COMBAT")
+combatEventFrame:RegisterEvent("PLAYER_ENTERING_WORLD")
 combatEventFrame:SetScript("OnEvent", function(_, event, ...)
     if event == "COMBAT_LOG_EVENT_UNFILTERED" then
         OnCombatLogEvent()
     elseif event == "UNIT_COMBAT" then
         OnUnitCombat(...)
+    elseif event == "PLAYER_ENTERING_WORLD" then
+        ApplyPortraitHitIndicatorState()
     end
 end)
 
 ns:RegisterCallback("PLAYER_LOGIN", function()
     InitPool()
+    ApplyPortraitHitIndicatorState()
     local okG, g = ns:SafeGlobal("UnitGUID", "player")
     if okG and ns:IsSafeString(g) then
         playerGUID = g
     end
+end)
+
+ns:RegisterCallback("CONFIG_CHANGED", function()
+    ApplyPortraitHitIndicatorState()
 end)
